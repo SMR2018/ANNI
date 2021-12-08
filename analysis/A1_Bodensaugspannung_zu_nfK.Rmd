@@ -1,0 +1,34 @@
+---
+title: "1. Bodensaugspannung in nutzbare Feldkapazität (nFK) umwandeln"
+author: Samantha Rubo
+date: 2021-12-08
+output: html_notebook
+---
+
+
+### Wasserhaltevermögen der Felder der HGU:
+|Schicht Nr.|Bezeichnung|100%nFK entsprechen|"Wassergehalt (Vol.% bei 100%nFK)"|
+|:---------:|:---------:|:-----------------:|:--------------------------------:|
+|   1       |	0-30 cm	|       49.3 mm     |	            16.4%              |
+|   2       |  30-60 cm |       46.1 mm     |	            15.4%              |
+|   3       |  60-90 cm |       43.4 mm     |               14.5%              |
+
+Daten unter "Z:\\Außenbetrieb\\Flächenbelegung\\Wasserhaltevermögen Böden Felder Gb.xlsx"
+
+
+```{r}
+# Feldkapazität pF:
+# pF = log10(|Matrixpotential / hPa|) #???
+# permanenter Welkepunkt bei pF = 4.2 = welke_perm
+#pFmin = 1.8
+FK = 2.5 - 1.8 #pF-Werte für langsam bewegtes Wasser
+welke_perm = 4.2
+#nutzbare Feldkapazität nfK = FK - welke_perm
+
+nFK100 = 49.3 #mm
+vol_wasser_nFK100 = 16.4 #%
+
+10^4.2
+```
+
+
