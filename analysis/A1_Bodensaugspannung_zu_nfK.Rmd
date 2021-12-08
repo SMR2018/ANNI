@@ -15,20 +15,32 @@ output: html_notebook
 
 Daten unter "Z:\\Außenbetrieb\\Flächenbelegung\\Wasserhaltevermögen Böden Felder Gb.xlsx"
 
-
+!Grafik[]
 ```{r}
 # Feldkapazität pF:
 # pF = log10(|Matrixpotential / hPa|) #???
-# permanenter Welkepunkt bei pF = 4.2 = welke_perm
+# permanenter Welkepunkt bei pF = 4.2 --> WP
 #pFmin = 1.8
-FK = 2.5 - 1.8 #pF-Werte für langsam bewegtes Wasser
-welke_perm = 4.2
-#nutzbare Feldkapazität nfK = FK - welke_perm
+#FK = 2.5 - 1.8 #pF-Werte für langsam bewegtes Wasser
+pfmin = 1.8
+WP = 4.2
+#nutzbare Feldkapazität nfK = FK - WP
+nFK100 = 49.3 #mm oder l/m2
+vol_wasser_nFK100 = 16.4 #% 
 
-nFK100 = 49.3 #mm
-vol_wasser_nFK100 = 16.4 #%
 
-10^4.2
+10^1.8 #Unter-Grenze in hPa
+10^2.5 #Ober-Grenze in hPa
+
+
+#16.4 Vol% Wasser == 49.3mm Wasser == 100% nFK
+
+
+#für Schluffboden:
+#10 Vol% == pf(4.2) == WP 
+#30 Vol% == pF(2.5)
+(23.5 - 10) / (30 - 10) #nFK
+
 ```
 
 
