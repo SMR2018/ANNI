@@ -24,7 +24,6 @@ knitr::include_graphics("../graphics/Feldkapazität_Thomas.png")
 
 
 ```{r message=FALSE, warning=FALSE, echo=FALSE}
-#![nfK_Thomas](../graphics/Feldkapazität_Thomas.png)
 library(data.table)
 library(dplyr)
 library(ggplot2)
@@ -246,5 +245,11 @@ file1 <- "../graphics/nFK_2021_Satz1_Bild5.png"
 #file2 <- "../data/derived_data/nfK_2021_Satz1.csv"
 # file2 <- "../data/derived_data/nfK_2020_Satz2.csv"
 # write.table(x = tensio, file = file2, sep = ";", dec = ".", row.names = FALSE)
+```
+
+#Bewässerung_mean-Tabelle speichern
+```{r}
+#file1 <- "../data/derived_data/bewaesserung_mean_2021_S1.csv"
+#write.table(x = bewaesserung_mean, file = file1, sep = ";", dec = ".", row.names = FALSE)
 ```
 
