@@ -17,30 +17,142 @@ Daten unter "Z:\\Außenbetrieb\\Flächenbelegung\\Wasserhaltevermögen Böden Fe
 
 !Grafik[]
 ```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+```
+
+```{r}
 # Feldkapazität pF:
 # pF = log10(|Matrixpotential / hPa|) #???
 # permanenter Welkepunkt bei pF = 4.2 --> WP
 #pFmin = 1.8
-#FK = 2.5 - 1.8 #pF-Werte für langsam bewegtes Wasser
-pfmin = 1.8
-WP = 4.2
-#nutzbare Feldkapazität nfK = FK - WP
-nFK100 = 49.3 #mm oder l/m2
-vol_wasser_nFK100 = 16.4 #% 
-
-
-10^1.8 #Unter-Grenze in hPa
-10^2.5 #Ober-Grenze in hPa
+# #FK = 2.5 - 1.8 #pF-Werte für langsam bewegtes Wasser
+# pfmin = 1.8
+# WP = 4.2
+# #nutzbare Feldkapazität nfK = FK - WP
+# nFK100 = 49.3 #mm oder l/m2
+# wasser_volpercent_nFK100 = 16.4 #%, aus Bodenanalysen Tabelle oben
+# wasser_volpercent_nfK0 = 8 #%, Literatur-Wert
+# 
+# Boden_volumen_m3 <- 1*1*0.3 #m^3, Volumen Boden 1m2, 0-30cm Tiefe => X * 1000 = l/m2
+# Boden_volumen_l_m2 <- Boden_volumen_m3 * 1000
+# wasser_volpercent_nFK100 * (Boden_volumen_l_m2/100) #mm oder l/m2 == nFK100
+# 
+# 10^pfmin #Unter-Grenze in hPa
+# 10^WP #Ober-Grenze in hPa
 
 
 #16.4 Vol% Wasser == 49.3mm Wasser == 100% nFK
 
 
-#für Schluffboden:
-#10 Vol% == pf(4.2) == WP 
-#30 Vol% == pF(2.5)
-(23.5 - 10) / (30 - 10) #nFK
+```
+
+
+```{r}
+pf_min = 1.8
+pf_max = 4.2
+hPa_min = 10^pf_min
+hPa_max = 10^pf_max
+#Vol% Wasser bei 100% nFK für drei Bodentiefen:
+T0020 <- 49.3
+T4060 <- 46.1
+T2040 <- T0020 - (T0020-T4060)/2
+```
+
+#Tensiometer-Daten laden
+```{r}
+tensio <- fread("../data/raw_data/Tensiometer_Satz3_20210730.csv", sep = ";")
+parzelle_id <- fread("../data/raw_data/Parzellen_Satz3_20210607.csv", sep=";")
+#tensio <- fread("../data/raw_data/Tensiometer_Satz2_20210727.csv", sep = ";")
+#parzelle_id <- fread("../data/raw_data/Parzellen_Satz2_20201128.csv", sep=";")
+tensio <- left_join(tensio, parzelle_id, by="parzelle_id")
+```
+#Tensio filtern für erste Wiederholung (nur um gerade Ressourcen zu sparen)
+```{r}
+tensio <- tensio %>% 
+    filter(variante_id ==12) %>% 
+    group_by(zeit_messung) %>%
+    summarise_at(c("bodensaugspannung_0020_hPa",
+                   "bodensaugspannung_2040_hPa",
+                   "bodensaugspannung_4060_hPa"), ~mean(., na.rm=TRUE)) %>%
+    mutate_at("zeit_messung", ~as_datetime(.))
 
 ```
 
+#hPa in pf umwandeln
+```{r}
+tensio <- tensio %>%
+    mutate(pf_0020 = log10(bodensaugspannung_0020_hPa),
+           pf_2040 = log10(bodensaugspannung_2040_hPa),
+           pf_4060 = log10(bodensaugspannung_4060_hPa)
+    )
+```
+
+```{r}
+nfk_fun <- function(x){(1-(x-pf_min) / (pf_max-pf_min))*100}
+tensio <- tensio %>% as_tibble() %>%
+    mutate_at(c("pf_0020", "pf_2040", "pf_4060"), 
+              list(nFK = nfk_fun)) %>%
+    rename_with(.cols = ends_with("_nfK"), ~gsub("pf_", "T", .x, fixed = TRUE))
+```
+
+```{r}
+tensio_melted <- tidyr::pivot_longer(tensio %>% 
+                                         select(c("zeit_messung", 
+                                                  "T0020_nFK", "T2040_nFK" ,"T4060_nFK")), 
+                                     cols = c("T0020_nFK", "T2040_nFK" ,"T4060_nFK"),
+                                     # cols = c("parzelle_name", "zeit_messung" ), 
+                                     names_to = "Bodentiefe", 
+                                     values_to = "nFK_prozent") %>%
+    mutate(Bodentiefe = substr(Bodentiefe,4,5) %>% as.numeric)
+
+```
+
+
+```{r}
+# Legende einlesen:
+# path2 <- "../../WMS_WFS_Bodenfeuchte/GIS/Legende.csv"
+# legende_df <- data.table::fread(path2, encoding = "Latin-1") 
+
+# Farben und Klassenbreite anfuegen:
+# Style des Bodenfeuchteviewers #https://www.dwd.de/DE/fachnutzer/landwirtschaft/5_bofeuview/_node.html
+# if (color_style == "DWD") {
+# my_colors <- c("#c8642d", "#fac83c", "#fafa4b", "#96dc4b", "#4b964b", "#32c8fa", "#0000fa", "#ffffff")
+# my_breaks <- c(0, 10, 30, 50, 80, 100, 120, Inf)
+# my_labels <- paste0(
+#     legende_df$Legende_Bezeichnung_DE,
+#     " [", legende_df$Legende_Wertebereich_nFK, "]"
+# )
+#} else if (color_style == "10_prozent") {
+
+# Style: 10%nFK-Schritte 0-120% nFK
+my_breaks <- c(seq(from = 0, to = 120, by = 10), Inf)
+my_colors <- colorRampPalette(c(
+    "brown", "yellow", "forestgreen",
+    "lightblue", "blue", "darkblue"
+))(length(my_breaks))
+my_labels <- levels(cut(tensio_melted$nFK_prozent, breaks = my_breaks))
+#} 
+
+
+# plot erstellen: #-Bodentiefe, da der Wert die "bis"-Bodentiefe beschreibt
+p <- ggplot(data = tensio_melted,
+            aes(x = zeit_messung, y = -(Bodentiefe), z = nFK_prozent)) +
+    geom_contour_filled(breaks = my_breaks) +
+    scale_colour_manual("Soil moisture (% nFK)",
+                        values = my_colors, labels = my_labels,
+                        aesthetics = "fill", drop = FALSE
+    ) +
+    # "drop = FALSE" ist notwendig um auch Werte anzuzeigen (und die Farben zu scalen), die nicht ueber den Wertebereich in der CSV hinausgehen (z.B. <10 oder >120 % nFK)
+    labs(title = "Soil moisture time series", 
+         x = "Date",
+         y = "Soil depth (cm)"
+    )
+
+# Ausgabe des Plots
+p
+
+```
 
