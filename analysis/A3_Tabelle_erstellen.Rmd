@@ -1,0 +1,53 @@
+---
+title: "3. Tabelle erstellen für einen gewählten Satz Spinat"
+author: "Samantha Rubo"
+date: '2021-12-10'
+output: html_notebook
+---
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ggnewscale)
+library(tidyr)
+```
+
+#Daten-Tabelle erstellen
+```{r}
+aussaat <- as_date("2021-04-06")
+file1 <- "../data/derived_data/nfK_2021_Satz1.csv" #Tensiometer
+file2 <- "../data/raw_data/2021_008_Spinat_F6_S1_Klimadaten.csv" #Wetter
+file3 <- "../data/derived_data/bewaesserung_mean_2021_S1.csv" #Bewässerung
+
+tensio <- read.csv(file1, sep = ";", dec = ".", row.names = NULL)  %>%
+    filter(wasser_level == "Wfull") %>%
+    mutate_at("zeit_messung", ~as_date(.,format="%Y-%m-%d")) %>%
+    select(zeit_messung, T0020_nFK, T2040_nFK, T4060_nFK)
+
+zeit <- range(tensio$zeit_messung, na.rm = TRUE)
+
+wetter <- read.csv(file2, sep = ";", dec = ",", row.names = NULL) %>%
+    mutate_at("Datum", ~as_date(.,format="%Y-%m-%d")) %>%
+    filter(Datum %in%  zeit[1]:zeit[2]) %>%
+    select("Datum", "Tmax", "Tmin", "Tmean", "RF", "Glob", "P", "RHmin", "V2") %>%
+    mutate(Tage_seit_Aussaat = 1) %>%
+    mutate_at("Tage_seit_Aussaat", ~cumsum(.) + as.numeric(zeit[1] - aussaat))
+
+bewaesserung <- read.csv(file3, sep = ";", dec = ".", row.names = NULL) %>%
+    mutate_at("Datum", ~as_date(.,format="%Y-%m-%d")) %>%
+    filter(wasser_level == "Wfull") %>% select(-wasser_level)
+
+#wetter und bewässerung zusammenführen:
+input_tabelle <- wetter %>% left_join(bewaesserung, by="Datum") %>%
+    left_join(tensio, by=c("Datum" = "zeit_messung"))
+```
+
+```{r}
+wetter
+```
+
+
+
+
