@@ -46,8 +46,59 @@ input_tabelle <- wetter %>% left_join(bewaesserung, by="Datum") %>%
 
 ```{r}
 wetter
+tensio
+bewaesserung
+input_tabelle
+```
+### Wasserhaltevermögen der Felder der HGU:
+|Schicht Nr.|Bezeichnung|100%nFK entsprechen|"Wassergehalt (Vol.% bei 100%nFK)"|
+|:---------:|:---------:|:-----------------:|:--------------------------------:|
+|   1       |	0-30 cm	|       49.3 mm     |	            16.4%              |
+|   2       |  30-60 cm |       46.1 mm     |	            15.4%              |
+|   3       |  60-90 cm |       43.4 mm     |               14.5%              |
+
+```{r}
+#Vol% Wasser bei 100% nFK für drei Bodentiefen:
+T0020_Vol100 <- 49.3
+T4060_Vol100 <- 46.1
+T2040_Vol100 <- T0020 - (T0020-T4060)/2
 ```
 
 
+```{r}
+nn = nrow(input_tabelle)
+wasserverbrauch <- input_tabelle %>% 
+    rowwise() %>%
+    mutate(wasser_input = sum(bewaesserung_mm, P, na.rm = TRUE)) %>% 
+    ungroup() %>%
+    #select(bewaesserung_mm, P, wasser_input)
+    mutate(T0020_mm = 0.01 * T0020_nFK * T0020_Vol100,
+           T2040_mm = 0.01 * T2040_nFK * T2040_Vol100,
+           T4060_mm = 0.01 * T4060_nFK * T4060_Vol100) %>%
+    
+    mutate_at(c("T0020_mm", "T2040_mm", "T4060_mm"),
+              ~c(NA,diff(.))) %>%
+    mutate(Tageswirkung_Wasserinput = c(NA,NA,wasser_input[-c((nn-1):nn)]
+                                        )) %>% 
+    rowwise() %>%
+    mutate(Wasser_diff_mm = sum(T0020_mm, T2040_mm, T4060_mm, na.rm = TRUE)) %>%
+    mutate(Wasser_diff_mm_minus_input = Wasser_diff_mm - Tageswirkung_Wasserinput) #%>%
+    # mutate_at(c("T0020_mm", "T2040_mm", "T4060_mm"),
+    #           ~.- wasser_input) %>%
+    #select(Datum, Tage_seit_Aussaat, T0020_mm, T2040_mm, T4060_mm,wasser_input, Tageswirkung_Wasserinput)
+
+#T0020_nFK,T2040_nFK,T4060_nFK)
+wasserverbrauch
+```
+```{r}
+ggplot(wasserverbrauch, aes(Tage_seit_Aussaat,
+                            Wasser_diff_mm_minus_input
+                            #Wasser_diff_mm
+                            #T0020_mm
+                            #T0020_mm-wasser_input
+)) + 
+    geom_line() #+ 
+#geom_smooth()
+```
 
 
