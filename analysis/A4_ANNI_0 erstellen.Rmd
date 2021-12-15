@@ -47,7 +47,7 @@ input_df <- input_tabelle %>%
     ungroup %>%
     mutate(wasser_input_Vortag = c(NA,wasser_input[1:(n()-1)])) %>%
     select(-P, -bewaesserung_mm, -wasser_input) 
-    
+
 ```
 
 
@@ -75,9 +75,14 @@ idx <- sample(1:nrow(input_df.scaled), size = tail(nrow(input_df.scaled)*0.7) )
 nn=neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+
                  Tmean+RF+Glob+RHmin+V2+wasser_input_Vortag,
              data=input_df.scaled[idx,],
-             hidden=c(12,8),
+             hidden=3,
              act.fct = "logistic",
-             linear.output = FALSE)
+             linear.output = FALSE,
+             algorithm = "backprop", #backpropagation
+             learningrate = 0.0001, 
+             threshold=0.1,
+             rep=5,
+             stepmax = 1e+06)
 ```
 
 ```{r}
@@ -91,7 +96,7 @@ plot(nn,col.hidden = 'darkgreen',
 
 ```{r}
 Predict=compute(nn,input_df.scaled[-idx,])
-Predict$net.result
+#Predict$net.result
 ```
 
 ```{r}
@@ -128,6 +133,7 @@ Predict_ <- Predict$net.result*(max(input_df$T0060_mm)-
 test.r <- (input_df.scaled[-idx,])*(max(input_df$T0060_mm)-min(input_df$T0060_mm))+min(input_df$T0060_mm)
 
 MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(input_df.scaled[-idx,])
+MSE.nn
 ```
 
 
@@ -135,120 +141,120 @@ MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(input_df.scaled[-idx,])
 
 
 
-#V2
-```{r}
-n <- neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+                 Tmax+Tmin+Tmean+RF+Glob+RHmin+V2+wasser_input,
-               data=input_df[idx,],
-               hidden = c(12,7),
-               linear.output = F,
-               lifesign = 'full',
-               rep=1)
-```
-```{r}
-plot(n)
-```
+<!-- #V2 -->
+<!-- ```{r} -->
+<!-- n <- neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+                 Tmax+Tmin+Tmean+RF+Glob+RHmin+V2+wasser_input, -->
+<!--                data=input_df[idx,], -->
+<!--                hidden = c(12,7), -->
+<!--                linear.output = F, -->
+<!--                lifesign = 'full', -->
+<!--                rep=1) -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- plot(n) -->
+<!-- ``` -->
 
 
-#V3
+<!-- #V3 -->
 
-```{r}
-data <- as.matrix(input_df)
-dimnames(data) <- NULL
-```
+<!-- ```{r} -->
+<!-- data <- as.matrix(input_df) -->
+<!-- dimnames(data) <- NULL -->
+<!-- ``` -->
 
-```{r}
-set.seed(123)
-ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
-training <- data[ind==1,2:13]
-test <- data[ind==2, 2:13]
-trainingtarget <- data[ind==1, 1]
-testtarget <- data[ind==2,1]
-str(trainingtarget)
-str(testtarget)
-```
-```{r}
-m <- colMeans(training)
-s <- apply(training, 2, sd)
-training <- scale(training, center = m, scale = s)
-test <- scale(test, center = m, scale = s)
-```
+<!-- ```{r} -->
+<!-- set.seed(123) -->
+<!-- ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3)) -->
+<!-- training <- data[ind==1,2:13] -->
+<!-- test <- data[ind==2, 2:13] -->
+<!-- trainingtarget <- data[ind==1, 1] -->
+<!-- testtarget <- data[ind==2,1] -->
+<!-- str(trainingtarget) -->
+<!-- str(testtarget) -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- m <- colMeans(training) -->
+<!-- s <- apply(training, 2, sd) -->
+<!-- training <- scale(training, center = m, scale = s) -->
+<!-- test <- scale(test, center = m, scale = s) -->
+<!-- ``` -->
 
-```{r}
-model <- keras::keras_model_sequential()
-model %>%
-    layer_dense(units = 5, activation = 'relu', input_shape = c(12)) %>%
-    layer_dense(units = 1)
-```
+<!-- ```{r} -->
+<!-- model <- keras::keras_model_sequential() -->
+<!-- model %>% -->
+<!--     layer_dense(units = 5, activation = 'relu', input_shape = c(12)) %>% -->
+<!--     layer_dense(units = 1) -->
+<!-- ``` -->
 
-```{r}
-model %>% compile(loss = 'mse',
-                  optimizer = 'rmsprop', 
-                  metrics = 'mae') 
-```
+<!-- ```{r} -->
+<!-- model %>% compile(loss = 'mse', -->
+<!--                   optimizer = 'rmsprop',  -->
+<!--                   metrics = 'mae')  -->
+<!-- ``` -->
 
-```{r}
-mymodel <- model %>%          
-    fit(training,trainingtarget,
-        epochs = 100,
-        batch_size = 32,
-        validation_split = 0.2)
-```
+<!-- ```{r} -->
+<!-- mymodel <- model %>%           -->
+<!--     fit(training,trainingtarget, -->
+<!--         epochs = 100, -->
+<!--         batch_size = 32, -->
+<!--         validation_split = 0.2) -->
+<!-- ``` -->
 
-```{r}
-model %>% evaluate(test, testtarget)
-pred <- model %>% predict(test)
-mean((testtarget-pred)^2) 
-```
-```{r}
-plot(testtarget, pred) 
-```
-
-
-
+<!-- ```{r} -->
+<!-- model %>% evaluate(test, testtarget) -->
+<!-- pred <- model %>% predict(test) -->
+<!-- mean((testtarget-pred)^2)  -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- plot(testtarget, pred)  -->
+<!-- ``` -->
 
 
 
 
-```{r}
-model <- keras::keras_model_sequential()
-
-model %>%
-    layer_dense(units = 20, activation = 'relu', input_shape = c(12)) %>%
-    layer_dropout(rate=0.4)  %>%
-    layer_dense(units = 50, activation = 'relu')  %>%
-    layer_dropout(rate=0.2)  %>%
-    layer_dense(units = 20, activation = 'relu')  %>%
-    layer_dropout(rate=0.2)  %>%
-    layer_dense(units = 1)
-```
-
-```{r}
-model %>% compile(loss = 'mse',
-                  optimizer = 'rmsprop', 
-                  metrics = 'mae') 
-```
-
-```{r message=FALSE, include=FALSE}
-mymodel <- model %>%          
-    fit(training,trainingtarget,
-        epochs = 100,
-        batch_size = 32,
-        validation_split = 0.2)
-```
-
-```{r}
-model %>% evaluate(test, testtarget)
-pred <- model %>% predict(test)
-mean((testtarget-pred)^2) 
-```
-```{r}
-plot(testtarget, pred) 
-```
 
 
 
-#V4
-```{r}
+<!-- ```{r} -->
+<!-- model <- keras::keras_model_sequential() -->
 
-```
+<!-- model %>% -->
+<!--     layer_dense(units = 20, activation = 'relu', input_shape = c(12)) %>% -->
+<!--     layer_dropout(rate=0.4)  %>% -->
+<!--     layer_dense(units = 50, activation = 'relu')  %>% -->
+<!--     layer_dropout(rate=0.2)  %>% -->
+<!--     layer_dense(units = 20, activation = 'relu')  %>% -->
+<!--     layer_dropout(rate=0.2)  %>% -->
+<!--     layer_dense(units = 1) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- model %>% compile(loss = 'mse', -->
+<!--                   optimizer = 'rmsprop',  -->
+<!--                   metrics = 'mae')  -->
+<!-- ``` -->
+
+<!-- ```{r message=FALSE, include=FALSE} -->
+<!-- mymodel <- model %>%           -->
+<!--     fit(training,trainingtarget, -->
+<!--         epochs = 100, -->
+<!--         batch_size = 32, -->
+<!--         validation_split = 0.2) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- model %>% evaluate(test, testtarget) -->
+<!-- pred <- model %>% predict(test) -->
+<!-- mean((testtarget-pred)^2)  -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- plot(testtarget, pred)  -->
+<!-- ``` -->
+
+
+
+<!-- #V4 -->
+<!-- ```{r} -->
+
+<!-- ``` -->
 
