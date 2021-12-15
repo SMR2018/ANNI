@@ -75,14 +75,14 @@ idx <- sample(1:nrow(input_df.scaled), size = tail(nrow(input_df.scaled)*0.7) )
 nn=neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+
                  Tmean+RF+Glob+RHmin+V2+wasser_input_Vortag,
              data=input_df.scaled[idx,],
-             hidden=3,
+             hidden=c(5,3),
              act.fct = "logistic",
              linear.output = FALSE,
              algorithm = "backprop", #backpropagation
-             learningrate = 0.0001, 
+             learningrate = 0.00001, 
              threshold=0.1,
-             rep=5,
-             stepmax = 1e+06)
+             #rep=5,
+             stepmax = 1e+09)
 ```
 
 ```{r}
