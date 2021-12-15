@@ -4,6 +4,9 @@ author: "Samantha Rubo"
 date: '2021-12-15'
 output: html_notebook
 ---
+```{r}
+rm(list = ls())
+```
 
 
 ```{r message=FALSE, warning=FALSE, include=FALSE}
@@ -14,6 +17,7 @@ library(lubridate)
 #library(ggnewscale)
 #library(tidyr)
 library(neuralnet)
+#library(keras)
 ```
 
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
@@ -21,7 +25,7 @@ library(neuralnet)
 input_tabelle <- read.csv(
     "../data/derived_data/wasserverbrauch_2021_Satz1.csv",
     #"../data/derived_data/input_tabelle_2021_Satz1.csv", 
-                          sep = ";", dec = ".") %>%
+    sep = ";", dec = ".") %>%
     mutate_at("Datum", ~as_date(.))
 ```
 
@@ -37,22 +41,214 @@ input_tabelle <-
 
 ```{r}
 input_df <- input_tabelle %>%
-    select(T0020_nFK_Vortag,T2040_nFK_Vortag, T4060_nFK_Vortag, T0060_mm,Tage_seit_Aussaat,Tmax,Tmin,Tmean,RF,Glob,RHmin,V2,P,bewaesserung_mm) %>%
+    select(T0060_mm, T0020_nFK_Vortag,T2040_nFK_Vortag, T4060_nFK_Vortag,Tage_seit_Aussaat,Tmax,Tmin,Tmean,RF,Glob,RHmin,V2,P,bewaesserung_mm) %>%
     rowwise() %>%
     mutate(wasser_input = sum(P, bewaesserung_mm, na.rm = TRUE)) %>%
-    select(-P, -bewaesserung_mm)
+    ungroup %>%
+    mutate(wasser_input_Vortag = c(NA,wasser_input[1:(n()-1)])) %>%
+    select(-P, -bewaesserung_mm, -wasser_input) 
+    
 ```
 
 
 ```{r}
-nn=neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+Tmax+Tmin+Tmean+RF+Glob+RHmin+V2+wasser_input,
-             data=input_df,
-             hidden=3,
+# The predictor vars must be scaled data for the ANN fitting
+input_df.scaled <- as.data.frame(scale(input_df))
+min.T0060_mm <- min(input_df$T0060_mm, na.rm = TRUE)
+max.T0060_mm <- max(input_df$T0060_mm, na.rm = TRUE)
+# response var must be scaled to [0 < resp < 1]
+input_df.scaled$T0060_mm <- scale(input_df$T0060_mm
+                                  , center = min.T0060_mm
+                                  , scale = max.T0060_mm - min.T0060_mm)
+
+# Train-test split
+```
+
+
+```{r}
+set.seed(123)
+idx <- sample(1:nrow(input_df.scaled), size = tail(nrow(input_df.scaled)*0.7) )
+```
+
+#ANNI
+```{r}
+nn=neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+
+                 Tmean+RF+Glob+RHmin+V2+wasser_input_Vortag,
+             data=input_df.scaled[idx,],
+             hidden=c(12,8),
              act.fct = "logistic",
              linear.output = FALSE)
 ```
 
 ```{r}
 plot(nn)
+plot(nn,col.hidden = 'darkgreen', 
+     col.hidden.synapse = 'darkgreen',
+     show.weights = F,
+     information = F,
+     fill = 'lightblue')
+```
+
+```{r}
+Predict=compute(nn,input_df.scaled[-idx,])
+Predict$net.result
+```
+
+```{r}
+# prob <- Predict$net.result
+# pred <- ifelse(prob>0.5, 1, 0)
+# pred
+```
+
+```{r}
+#NeuralNetTools::garson(nn)
+```
+
+```{r}
+#NeuralNetTools::lekprofile(nn)
+```
+
+
+```{r}
+ggplot(data.frame(actual_value =input_df.scaled[-idx,1],
+                  predicted = Predict$net.result),
+       aes(actual_value, predicted)) + 
+    geom_point() + 
+    geom_abline(slope = 1, intercept = 0, color = "red")+
+    theme_bw() + 
+    theme(panel.grid = element_blank(), aspect.ratio = 1)
+```
+
+
+```{r}
+
+Predict_ <- Predict$net.result*(max(input_df$T0060_mm)-
+                                    min(input_df$T0060_mm))+min(input_df$T0060_mm)
+
+test.r <- (input_df.scaled[-idx,])*(max(input_df$T0060_mm)-min(input_df$T0060_mm))+min(input_df$T0060_mm)
+
+MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(input_df.scaled[-idx,])
+```
+
+
+
+
+
+
+#V2
+```{r}
+n <- neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+                 Tmax+Tmin+Tmean+RF+Glob+RHmin+V2+wasser_input,
+               data=input_df[idx,],
+               hidden = c(12,7),
+               linear.output = F,
+               lifesign = 'full',
+               rep=1)
+```
+```{r}
+plot(n)
+```
+
+
+#V3
+
+```{r}
+data <- as.matrix(input_df)
+dimnames(data) <- NULL
+```
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
+training <- data[ind==1,2:13]
+test <- data[ind==2, 2:13]
+trainingtarget <- data[ind==1, 1]
+testtarget <- data[ind==2,1]
+str(trainingtarget)
+str(testtarget)
+```
+```{r}
+m <- colMeans(training)
+s <- apply(training, 2, sd)
+training <- scale(training, center = m, scale = s)
+test <- scale(test, center = m, scale = s)
+```
+
+```{r}
+model <- keras::keras_model_sequential()
+model %>%
+    layer_dense(units = 5, activation = 'relu', input_shape = c(12)) %>%
+    layer_dense(units = 1)
+```
+
+```{r}
+model %>% compile(loss = 'mse',
+                  optimizer = 'rmsprop', 
+                  metrics = 'mae') 
+```
+
+```{r}
+mymodel <- model %>%          
+    fit(training,trainingtarget,
+        epochs = 100,
+        batch_size = 32,
+        validation_split = 0.2)
+```
+
+```{r}
+model %>% evaluate(test, testtarget)
+pred <- model %>% predict(test)
+mean((testtarget-pred)^2) 
+```
+```{r}
+plot(testtarget, pred) 
+```
+
+
+
+
+
+
+
+```{r}
+model <- keras::keras_model_sequential()
+
+model %>%
+    layer_dense(units = 20, activation = 'relu', input_shape = c(12)) %>%
+    layer_dropout(rate=0.4)  %>%
+    layer_dense(units = 50, activation = 'relu')  %>%
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 20, activation = 'relu')  %>%
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 1)
+```
+
+```{r}
+model %>% compile(loss = 'mse',
+                  optimizer = 'rmsprop', 
+                  metrics = 'mae') 
+```
+
+```{r message=FALSE, include=FALSE}
+mymodel <- model %>%          
+    fit(training,trainingtarget,
+        epochs = 100,
+        batch_size = 32,
+        validation_split = 0.2)
+```
+
+```{r}
+model %>% evaluate(test, testtarget)
+pred <- model %>% predict(test)
+mean((testtarget-pred)^2) 
+```
+```{r}
+plot(testtarget, pred) 
+```
+
+
+
+#V4
+```{r}
+
 ```
 
