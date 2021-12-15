@@ -13,6 +13,7 @@ Dafür werden zunächst zwei unabhängige Modelle erstellt. Grund dafür ist die
 ### Parameter ANN_Umwelt
 
 * **Input-Parameter**
+  * Start-nFK bzw. Output-nFK der letzten Modellierung 
   * Tage seit Kulturbeginn
   * Temperatur
   * Globalstrahlung
@@ -23,7 +24,7 @@ Dafür werden zunächst zwei unabhängige Modelle erstellt. Grund dafür ist die
   * (Kultur)
   * (Boden)
 * **Output-Parameter**
-  * Änderung Bodenmatrixpotential (oder umgerechnet in %nfK, aus Tensiometer) in drei Bodentiefen (20, 40, 60cm)
+  * Bodenmatrixpotential (oder umgerechnet in %nfK, aus Tensiometer) in drei Bodentiefen (20, 40, 60cm)
   
 
 Die Input-Parameter des neuronalen Netzes sind identisch mit denen der FAO56, um die Grasreferenzverdunstung zu berechnen, welche wiederum die Berechnungsgrundlage der Geisenheimer Steuerung (GS) ist. Der Outputparameter ist die Änderung im Bodenmatrixpotential (oder %nFK). Dies hat den Sinn, dass Schwellenwerte der nFK definiert werden können, bei denen bewässert werden soll. Dies erübrigt einen kc-Wert, allerdings muss für eine Übertragbarkeit des Modells neue Daten für verschiedene Böden und Kulturen einfließen.
@@ -52,6 +53,7 @@ Die Performance der GS wird evaluiert auf Grundlage der Bodenfeuchtedaten des Te
     - Wetterdaten zusammentragen
     - applizierte Wassermengen 
     - Tage seit Kulturbeginn
+    - IBI und IRMI
 4. ANNI_0 erstellen (in R)
 5. Parameter mit dem größten Einfluss identifizieren
 6. Güte des Modells ANNI_0 darstellen
