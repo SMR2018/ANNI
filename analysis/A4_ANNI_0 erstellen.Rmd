@@ -1,0 +1,58 @@
+---
+title: "ANNI_0 erstellen"
+author: "Samantha Rubo"
+date: '2021-12-15'
+output: html_notebook
+---
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#library(data.table)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+#library(ggnewscale)
+#library(tidyr)
+library(neuralnet)
+```
+
+### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+```{r}
+input_tabelle <- read.csv(
+    "../data/derived_data/wasserverbrauch_2021_Satz1.csv",
+    #"../data/derived_data/input_tabelle_2021_Satz1.csv", 
+                          sep = ";", dec = ".") %>%
+    mutate_at("Datum", ~as_date(.))
+```
+
+### nFK vom Vortag als Input ausweisen:
+```{r}
+input_tabelle <- 
+    input_tabelle %>%
+    mutate(T0020_nFK_Vortag = c(NA,T0020_nFK[1:(n()-1)]),
+           T2040_nFK_Vortag = c(NA,T2040_nFK[1:(n()-1)]),
+           T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) %>%
+    slice(-1) #erste Zeile entfernt, da hier NA
+```
+
+```{r}
+input_df <- input_tabelle %>%
+    select(T0020_nFK_Vortag,T2040_nFK_Vortag, T4060_nFK_Vortag, T0060_mm,Tage_seit_Aussaat,Tmax,Tmin,Tmean,RF,Glob,RHmin,V2,P,bewaesserung_mm) %>%
+    rowwise() %>%
+    mutate(wasser_input = sum(P, bewaesserung_mm, na.rm = TRUE)) %>%
+    select(-P, -bewaesserung_mm)
+```
+
+
+```{r}
+nn=neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+Tmax+Tmin+Tmean+RF+Glob+RHmin+V2+wasser_input,
+             data=input_df,
+             hidden=3,
+             act.fct = "logistic",
+             linear.output = FALSE)
+```
+
+```{r}
+plot(nn)
+```
+
