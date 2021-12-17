@@ -16,41 +16,16 @@ library(lubridate)
 \
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 ```{r}
-input_tabelle <- read.csv("../data/derived_data/input_tabelle_2021_Satz1.csv", 
+input_tabelle <- read.csv("../data/derived_data/input_tabelle_2021_Satz1_b.csv", 
                           sep = ";", dec = ".") %>%
     mutate_at("Datum", ~as_date(.))
 ```
 
 \
-### Wasserhaltevermögen der Felder der HGU:
-|Schicht Nr.|Bezeichnung|100%nFK entsprechen|"Wassergehalt (Vol.% bei 100%nFK)"|
-|:---------:|:---------:|:-----------------:|:--------------------------------:|
-|   1       |	0-30 cm	|       49.3 mm     |	            16.4%              |
-|   2       |  30-60 cm |       46.1 mm     |	            15.4%              |
-|   3       |  60-90 cm |       43.4 mm     |               14.5%              |
-
-\
-### Vol% Wasser bei 100% nFK für drei Bodentiefen (Schichttiefe je 20cm)
 ```{r}
-T0020_mm_bei100nFK <- 49.3/30*20 #Tabellenwert steht für 30cm Schichtdicke. Umrechnen auf 20cm.
-T4060_mm_bei100nFK <- 46.1/30*20
-T2040_mm_bei100nFK <- T0020_mm_bei100nFK - (T0020_mm_bei100nFK-T4060_mm_bei100nFK)/2
-```
-\
-```{r}
-wasserverbrauch <- input_tabelle %>%
-    # select(Datum, Tage_seit_Aussaat, Tmean, P, bewaesserung_mm, 
-    #        T0020_nFK, T2040_nFK, T4060_nFK, FAO56) %>%
-    mutate(T0020_mm = 0.01 * T0020_nFK * T0020_mm_bei100nFK,
-           T2040_mm = 0.01 * T2040_nFK * T4060_mm_bei100nFK,
-           T4060_mm = 0.01 * T4060_nFK * T2040_mm_bei100nFK) %>%
-    mutate(freier_Speicher_T0020_mm = T0020_mm_bei100nFK - T0020_mm,
-           freier_Speicher_T2040_mm = T4060_mm_bei100nFK - T2040_mm,
-           freier_Speicher_T4060_mm = T2040_mm_bei100nFK - T4060_mm) %>% 
-    
-    rowwise() %>%
-    mutate(T0060_mm = sum(T0020_mm, T2040_mm, T4060_mm, na.rm = TRUE),
-           wasserinput_mm = sum(P, bewaesserung_mm, na.rm = TRUE) - FAO56, 
+ wasserverbrauch <- input_tabelle %>%         
+     rowwise() %>%
+    mutate(wasserinput_mm = sum(P, bewaesserung_mm, na.rm = TRUE) - FAO56, 
            #FAO56 ändern: genauer wäre Evapotranspiration bei unbewachsenem Boden
            freier_Speicher_T0060_mm = sum(freier_Speicher_T0020_mm,
                                           freier_Speicher_T2040_mm,
