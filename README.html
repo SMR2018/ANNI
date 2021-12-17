@@ -179,6 +179,7 @@ pre code {
 <ul>
 <li><strong>Input-Parameter</strong>
 <ul>
+<li>Start-nFK bzw. Output-nFK der letzten Modellierung</li>
 <li>Tage seit Kulturbeginn</li>
 <li>Temperatur</li>
 <li>Globalstrahlung</li>
@@ -191,7 +192,7 @@ pre code {
 </ul></li>
 <li><strong>Output-Parameter</strong>
 <ul>
-<li>Änderung Bodenmatrixpotential (oder umgerechnet in %nfK, aus Tensiometer) in drei Bodentiefen (20, 40, 60cm)</li>
+<li>Bodenmatrixpotential (oder umgerechnet in %nfK, aus Tensiometer) in drei Bodentiefen (20, 40, 60cm)</li>
 </ul></li>
 </ul>
 <p>Die Input-Parameter des neuronalen Netzes sind identisch mit denen der FAO56, um die Grasreferenzverdunstung zu berechnen, welche wiederum die Berechnungsgrundlage der Geisenheimer Steuerung (GS) ist. Der Outputparameter ist die Änderung im Bodenmatrixpotential (oder %nFK). Dies hat den Sinn, dass Schwellenwerte der nFK definiert werden können, bei denen bewässert werden soll. Dies erübrigt einen kc-Wert, allerdings muss für eine Übertragbarkeit des Modells neue Daten für verschiedene Böden und Kulturen einfließen.</p>
@@ -223,6 +224,7 @@ pre code {
 <li>Wetterdaten zusammentragen</li>
 <li>applizierte Wassermengen</li>
 <li>Tage seit Kulturbeginn</li>
+<li>IBI und IRMI</li>
 </ul></li>
 <li>ANNI_0 erstellen (in R)</li>
 <li>Parameter mit dem größten Einfluss identifizieren</li>
