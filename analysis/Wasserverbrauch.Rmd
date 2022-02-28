@@ -25,7 +25,7 @@ input_tabelle <- read.csv("../data/derived_data/input_tabelle_2021_Satz1_b.csv",
 ```{r}
  wasserverbrauch <- input_tabelle %>%         
      rowwise() %>%
-    mutate(wasserinput_mm = sum(P, bewaesserung_mm, na.rm = TRUE) - FAO56, 
+    mutate(wasserinput_mm = sum(P, bewaesserung_mm, na.rm = TRUE) ,#- FAO56, 
            #FAO56 ändern: genauer wäre Evapotranspiration bei unbewachsenem Boden
            freier_Speicher_T0060_mm = sum(freier_Speicher_T0020_mm,
                                           freier_Speicher_T2040_mm,
@@ -195,5 +195,22 @@ ggplot(data = wasserverbrauch, aes(Tage_seit_Aussaat, taeglicher_wasserverbrauch
 ```{r}
 #write.table(wasserverbrauch, "../data/derived_data/wasserverbrauch_2021_Satz1.csv", 
 #            sep = ";", row.names = FALSE, dec = ".")
+```
+
+
+#Vergleich GS & Saugspannung
+```{r}
+ggplot(wasserverbrauch, aes(cumsum(FAO56),kumulierter_Wasserverbrauch)) + 
+    geom_smooth() + 
+    geom_point() + 
+    geom_abline(slope = 1, intercept = 0, aes(color="1:1-Linie")) + 
+    coord_fixed() + 
+    ylab("kumulierter Wasserverbrauch (mm): \n Saugspannung + P + Bewässerung") + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+
+```{r}
+
 ```
 
