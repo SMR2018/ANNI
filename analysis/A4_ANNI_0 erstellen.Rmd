@@ -10,7 +10,7 @@ rm(list = ls())
 \
 ### Bibliotheken laden
 ```{r message=FALSE, warning=FALSE, include=FALSE}
-#library(data.table)
+library(data.table)
 library(dplyr)
 library(ggplot2)
 library(lubridate)
@@ -145,7 +145,7 @@ predict_all_net <- predict_all$net.result*(maxy-miny)+miny
 
 ### Plot: Predicted values ~ actual values
 ```{r}
-rm(df1, df2)
+#rm(df1, df2)
 df1 <- as.data.table(data.frame(actual_value = y_raw, 
                                predicted_value = predict_all_net,
                                input = "alle_Daten"))
@@ -167,7 +167,7 @@ ggplot(bind_rows(df1, df2), aes(actual_value, predicted_value)) +
 
 
 
-
+# Keras Tensorflow
 
 <!-- #V2 -->
 <!-- ```{r} -->
