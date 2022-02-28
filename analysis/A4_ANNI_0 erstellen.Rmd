@@ -7,8 +7,8 @@ output: html_notebook
 ```{r}
 rm(list = ls())
 ```
-
-
+\
+### Bibliotheken laden
 ```{r message=FALSE, warning=FALSE, include=FALSE}
 #library(data.table)
 library(dplyr)
@@ -19,16 +19,16 @@ library(lubridate)
 library(neuralnet)
 #library(keras)
 ```
-
+\
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 ```{r}
-input_tabelle <- read.csv(
-    "../data/derived_data/wasserverbrauch_2021_Satz1.csv",
-    #"../data/derived_data/input_tabelle_2021_Satz1.csv", 
+input_tabelle <- data.table::fread(
+    "../data/derived_data/input_tabelle_2021_Satz1_b.csv", 
     sep = ";", dec = ".") %>%
     mutate_at("Datum", ~as_date(.))
+input_tabelle <- data.table::setDT(input_tabelle)
 ```
-
+\
 ### nFK vom Vortag als Input ausweisen:
 ```{r}
 input_tabelle <- 
@@ -38,7 +38,8 @@ input_tabelle <-
            T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) %>%
     slice(-1) #erste Zeile entfernt, da hier NA
 ```
-
+\
+### Wassereintrag aus P + Bewässerung berechnen. Benötigte Variablen selektieren.
 ```{r}
 input_df <- input_tabelle %>%
     select(T0060_mm, T0020_nFK_Vortag,T2040_nFK_Vortag, T4060_nFK_Vortag,Tage_seit_Aussaat,Tmax,Tmin,Tmean,RF,Glob,RHmin,V2,P,bewaesserung_mm) %>%
@@ -49,53 +50,59 @@ input_df <- input_tabelle %>%
     select(-P, -bewaesserung_mm, -wasser_input) 
 
 ```
-
-
+\
+### Datensatz skalieren --> notwendig als Input für ANN
 ```{r}
 # The predictor vars must be scaled data for the ANN fitting
-input_df.scaled <- as.data.frame(scale(input_df))
+input_df.scaled <- data.table::as.data.table(scale(input_df))
 min.T0060_mm <- min(input_df$T0060_mm, na.rm = TRUE)
 max.T0060_mm <- max(input_df$T0060_mm, na.rm = TRUE)
 # response var must be scaled to [0 < resp < 1]
-input_df.scaled$T0060_mm <- scale(input_df$T0060_mm
-                                  , center = min.T0060_mm
-                                  , scale = max.T0060_mm - min.T0060_mm)
+input_df.scaled$T0060_mm <- scale(input_df$T0060_mm, 
+                                  center = min.T0060_mm, 
+                                  scale = max.T0060_mm - min.T0060_mm)
 
 # Train-test split
 ```
-
-
+\
+### Index für Trainings- und Test-Datensatz
 ```{r}
 set.seed(123)
 idx <- sample(1:nrow(input_df.scaled), size = tail(nrow(input_df.scaled)*0.7) )
+train <- input_df.scaled[idx,]
+test <- input_df.scaled[-idx,]
 ```
-
-#ANNI
+\
+### ANNI erstellen
 ```{r}
-nn=neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+
-                 Tmean+RF+Glob+RHmin+V2+wasser_input_Vortag,
-             data=input_df.scaled[idx,],
-             hidden=c(5,3),
-             act.fct = "logistic",
+# Custom activation function
+#softplus <- function(x) log(1 + exp(x))
+
+nn=neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+Tmean+RF+Glob+RHmin+V2+wasser_input_Vortag,
+             data=train,
+             hidden=10,
+             act.fct = "logistic", #softplus
              linear.output = FALSE,
              algorithm = "backprop", #backpropagation
-             learningrate = 0.00001, 
-             threshold=0.1,
+             learningrate = 0.0001, 
+             #threshold=0.01,
              #rep=5,
-             stepmax = 1e+09)
+             stepmax = 1e+06) #1000000
 ```
-
+\
+### Nodes plotten
 ```{r}
-plot(nn)
+#plot(nn)
 plot(nn,col.hidden = 'darkgreen', 
      col.hidden.synapse = 'darkgreen',
      show.weights = F,
      information = F,
      fill = 'lightblue')
 ```
-
+\
+### Modell mit Test-Daten evaluieren
 ```{r}
-Predict=compute(nn,input_df.scaled[-idx,])
+Predict <- compute(nn,test)
 #Predict$net.result
 ```
 
@@ -110,31 +117,52 @@ Predict=compute(nn,input_df.scaled[-idx,])
 ```
 
 ```{r}
+# Nur bei einem hidden layer möglich.
 #NeuralNetTools::lekprofile(nn)
 ```
-
-
+\
+### MSE berechnen:
 ```{r}
-ggplot(data.frame(actual_value =input_df.scaled[-idx,1],
-                  predicted = Predict$net.result),
-       aes(actual_value, predicted)) + 
-    geom_point() + 
-    geom_abline(slope = 1, intercept = 0, color = "red")+
-    theme_bw() + 
-    theme(panel.grid = element_blank(), aspect.ratio = 1)
-```
+y_raw <- input_df$T0060_mm
+maxy <-max(y_raw)
+miny <-min(y_raw)
 
+Predict_ <- Predict$net.result*(maxy-miny)+miny
 
-```{r}
+test.r <- (test$T0060_mm)*(maxy-miny)+ miny
 
-Predict_ <- Predict$net.result*(max(input_df$T0060_mm)-
-                                    min(input_df$T0060_mm))+min(input_df$T0060_mm)
-
-test.r <- (input_df.scaled[-idx,])*(max(input_df$T0060_mm)-min(input_df$T0060_mm))+min(input_df$T0060_mm)
-
-MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(input_df.scaled[-idx,])
+MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(test)
 MSE.nn
 ```
+\
+
+
+```{r}
+predict_all <- compute(nn, input_df.scaled)
+predict_all_net <- predict_all$net.result*(maxy-miny)+miny
+#predict_all_net
+```
+
+### Plot: Predicted values ~ actual values
+```{r}
+rm(df1, df2)
+df1 <- as.data.table(data.frame(actual_value = y_raw, 
+                               predicted_value = predict_all_net,
+                               input = "alle_Daten"))
+df2 <- as.data.table(data.frame(actual_value =test.r, 
+                               predicted_value = Predict_,
+                               input = "test_Daten"))
+
+ggplot(bind_rows(df1, df2), aes(actual_value, predicted_value)) + 
+    geom_point() + 
+    geom_abline(slope = 1, intercept = 0, color = "red")+
+    ylab("ANN predicted AWC (%)") + xlab("actual AWC (%)") + 
+    facet_grid(.~input) + 
+    theme_bw() + 
+    coord_fixed() + 
+    theme(panel.grid = element_blank())
+```
+
 
 
 
