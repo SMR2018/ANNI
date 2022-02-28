@@ -43,8 +43,6 @@ bewaesserung <- read.csv(file3, sep = ";", dec = ".", row.names = NULL) %>%
 input_tabelle <- wetter %>% left_join(bewaesserung, by="Datum") %>%
     left_join(tensio, by=c("Datum" = "zeit_messung")) %>%
     mutate_at("bewaesserung_mm", ~ifelse(is.na(.), 0, .))
-
-input_tabelle
 ```
 
 ### Wasserhaltevermögen der Felder der HGU:
@@ -62,6 +60,7 @@ T4060_mm_bei100nFK <- 46.1/30*20
 T2040_mm_bei100nFK <- T0020_mm_bei100nFK - (T0020_mm_bei100nFK-T4060_mm_bei100nFK)/2
 ```
 \
+### Wassergehalt in mm in der gesamten Bodenschicht 0-60cm anfügen
 ```{r}
 input_tabelle <- input_tabelle %>%
     mutate(T0020_mm = 0.01 * T0020_nFK * T0020_mm_bei100nFK,
@@ -73,8 +72,14 @@ input_tabelle <- input_tabelle %>%
     rowwise() %>%
     mutate(T0060_mm = sum(T0020_mm, T2040_mm, T4060_mm, na.rm = TRUE)) %>%
     ungroup()
+
+input_tabelle
 ```
 
+\
+### Tabelle speichern on Projekt-Ordner für Daten
 ```{r}
 #write.table(x = input_tabelle, file = "../data/derived_data/input_tabelle_2021_Satz1_b.csv", sep = ";",dec = ".", row.names = FALSE)
 ```
+
+
