@@ -47,7 +47,11 @@ T2040 <- T0020 - (T0020-T4060)/2
 
 
 ```{r}
-db <- paste0("../../GeoSenSys2020/Data_2020/HGU_GeoSenSys_V3_5.db") #DB in other R-Project
+
+path1 <- ifelse(Sys.info()["nodename"] == "Samanthas-MBP.local", 
+                "../../Github_GeoSenSys/GeoSenSys2020/","../../GeoSenSys2020/")
+db <- paste0(path1, "Data_2020/HGU_GeoSenSys_V3_5.db") #DB in other R-Project
+
 db1 <- dbConnect(RSQLite::SQLite(), db)
 
 query <- "SELECT
@@ -65,6 +69,7 @@ query <- "SELECT
         "
 tensio <- dbGetQuery(db1, query)
 dbDisconnect(db1)
+rm(db1, path1)
 ```
 
 
@@ -87,9 +92,9 @@ tensio <- tensio %>%
     mutate_at("zeit_messung", ~as_date(.)) %>% #wieder in Datum (class) umformen
     
     #Varianten nach Bewässerungs-Stufe aufteilen:
-    mutate(wasser_level = case_when(variante_id == 9 ~ "Wfull_plus",
-                                    variante_id %in% c(5,10,11) ~ "Wfull",
-                                    variante_id %in% c(8,12) ~ "Wred",
+    mutate(wasser_level = case_when(variante_acronym == "N100W140" ~ "Wfull_plus",
+                                    variante_acronym %in% c("N100W100","N80W100") ~ "Wfull",
+                                    variante_acronym %in% c("N100W50") ~ "Wred",
                                     T ~ "Leerwert")) %>%
     #Faktorstufen sortieren (für Grafik)
     mutate_at("wasser_level", ~factor(., levels = c("Wfull_plus", "Wfull", "Wred"))) %>%
