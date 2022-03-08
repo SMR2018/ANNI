@@ -26,6 +26,7 @@ knitr::include_graphics("../graphics/Feldkapazität_Thomas.png")
 ```{r message=FALSE, warning=FALSE, echo=FALSE}
 library(DBI)
 library(data.table)
+library(dtplyr)
 library(dplyr)
 library(ggplot2)
 library(lubridate)
@@ -45,230 +46,239 @@ T4060 <- 46.1
 T2040 <- T0020 - (T0020-T4060)/2
 ```
 
-
+### Tensiometer-Daten, Wetter und Bewasserung aus SQLite-Datenbank lesen.
 ```{r}
-
+#Verbindung zur Datenbanl herstellen:
 path1 <- ifelse(Sys.info()["nodename"] == "Samanthas-MBP.local", 
                 "../../Github_GeoSenSys/GeoSenSys2020/","../../GeoSenSys2020/")
-db <- paste0(path1, "Data_2020/HGU_GeoSenSys_V3_5.db") #DB in other R-Project
+db <- paste0(path1, "Data_2020/HGU_GeoSenSys_V3_6.db") #DB in other R-Project
 
 db1 <- dbConnect(RSQLite::SQLite(), db)
 
+#Query fuer Tensiometer-Datensatz
 query <- "SELECT
+        Spinat_Saetze.satz_id,
+        Varianten.variante_H2O,
+        Parzellen.parzelle_name,
         Tensiometer.zeit_messung,
         Tensiometer.bodensaugspannung_0020_hPa,	
         Tensiometer.bodensaugspannung_2040_hPa,	
-        Tensiometer.bodensaugspannung_4060_hPa,	
-        Varianten.variante_acronym,
-        Parzellen.parzelle_name
-        
+        Tensiometer.bodensaugspannung_4060_hPa
+
         FROM Tensiometer
         LEFT JOIN Parzellen ON Tensiometer.parzelle_id = Parzellen.parzelle_id
         LEFT JOIN Varianten ON Parzellen.variante_id = Varianten.variante_id
         LEFT JOIN Spinat_Saetze ON Varianten.satz_id = Spinat_Saetze.satz_id
         "
 tensio <- dbGetQuery(db1, query)
-dbDisconnect(db1)
-rm(db1, path1)
-```
 
 
+#### Query fuer Wetter-Daten:
+query2 <- "SELECT
+      Wetter.datum_wetter,
+      Wetter.niederschlag_mm
+      FROM
+      Wetter"
 
-### Tensiometer-Daten laden
-```{r}
-# tensio <- fread("../data/raw_data/Tensiometer_Satz3_20210730.csv", sep = ";")
-# parzelle_id <- fread("../data/raw_data/Parzellen_Satz3_20210607.csv", sep=";")
-# #tensio <- fread("../data/raw_data/Tensiometer_Satz2_20210727.csv", sep = ";")
-# #parzelle_id <- fread("../data/raw_data/Parzellen_Satz2_20201128.csv", sep=";")
-# tensio <- left_join(tensio, parzelle_id, by="parzelle_id")
+
+wetter <- dbGetQuery(db1, query2)%>% #Niederschlag aller Saetze einlesen
+  mutate_at("datum_wetter", ~as_date(.))
+
+#Query fuer Bewaesserungs-Datensatz
+query3 <- "SELECT
+        Spinat_Saetze.satz_id,
+        Varianten.variante_H2O,
+        Parzellen.parzelle_name,
+        Bewaesserung.datum_bewaesserung,
+        Bewaesserung.wassermengen_mm
+        
+        FROM Bewaesserung
+        LEFT JOIN Parzellen ON Bewaesserung.parzelle_id = Parzellen.parzelle_id
+        LEFT JOIN Varianten ON Parzellen.variante_id = Varianten.variante_id
+        LEFT JOIN Spinat_Saetze ON Varianten.satz_id = Spinat_Saetze.satz_id
+        "
+bewaesserung <- dbGetQuery(db1, query3) %>% #Bewaesserung aller Saetze einlesen
+  mutate_at("datum_bewaesserung", ~as_date(.))
+
+dbDisconnect(db1) #Verbindung zur Datenbank beenden
+rm(db, db1, path1, query, query2, query3) #Helfer-Objekte loeschen
 ```
 
 ### Daten formatieren und Tagesmittelwerte der Bodensaugspannung berechnen
 ```{r}
 tensio <- tensio %>% 
-    #Datum formatieren und Tagesmittelwerte bilden
-    mutate_at("zeit_messung", ~as_datetime(.)) %>%
-    mutate_at("zeit_messung", ~format.Date(., format="%Y-%m-%d")) %>% #für Tageweise Mittelwert
-    mutate_at("zeit_messung", ~as_date(.)) %>% #wieder in Datum (class) umformen
-    
-    #Varianten nach Bewässerungs-Stufe aufteilen:
-    mutate(wasser_level = case_when(variante_acronym == "N100W140" ~ "Wfull_plus",
-                                    variante_acronym %in% c("N100W100","N80W100") ~ "Wfull",
-                                    variante_acronym %in% c("N100W50") ~ "Wred",
-                                    T ~ "Leerwert")) %>%
-    #Faktorstufen sortieren (für Grafik)
-    mutate_at("wasser_level", ~factor(., levels = c("Wfull_plus", "Wfull", "Wred"))) %>%
-    group_by(wasser_level, zeit_messung) %>%
-    summarise_at(c("bodensaugspannung_0020_hPa",
-                   "bodensaugspannung_2040_hPa",
-                   "bodensaugspannung_4060_hPa"), ~mean(., na.rm=TRUE))
+  #Datum formatieren und Tagesmittelwerte bilden
+  mutate_at("zeit_messung", ~as_datetime(.)) %>%
+  mutate_at("zeit_messung", ~format.Date(., format="%Y-%m-%d")) %>% #für Tageweise Mittelwert
+  mutate_at("zeit_messung", ~as_date(.)) %>% #wieder in Datum (class) umformen
+  
+  #Varianten nach Bewässerungs-Stufe aufteilen:
+  rename(wasser_level = variante_H2O) %>%
+  #Faktorstufen sortieren (für Grafik)
+  mutate_at("wasser_level", ~factor(., levels = c("Wfull_plus", "Wfull", "Wred"))) %>%
+  group_by(satz_id, wasser_level, zeit_messung) %>%
+  summarise_at(c("bodensaugspannung_0020_hPa",
+                 "bodensaugspannung_2040_hPa",
+                 "bodensaugspannung_4060_hPa"), ~round(mean(., na.rm=TRUE) , digits = 2))
 
 ```
 
 ### hPa in pf umwandeln: log10(hPa)
 ```{r}
 tensio <- tensio %>%
-    mutate(pf_0020 = log10(bodensaugspannung_0020_hPa),
-           pf_2040 = log10(bodensaugspannung_2040_hPa),
-           pf_4060 = log10(bodensaugspannung_4060_hPa)
-    )
+  mutate(pf_0020 = log10(bodensaugspannung_0020_hPa),
+         pf_2040 = log10(bodensaugspannung_2040_hPa),
+         pf_4060 = log10(bodensaugspannung_4060_hPa)
+  )
 ```
 
 ### nFK berechnen
 ```{r}
 nfk_fun <- function(x){(1-(x-pf_min) / (pf_max-pf_min))*100}
-tensio <- tensio %>% as_tibble() %>%
-    mutate_at(c("pf_0020", "pf_2040", "pf_4060"), 
-              list(nFK = nfk_fun)) %>%
-    rename_with(.cols = ends_with("_nfK"), ~gsub("pf_", "T", .x, fixed = TRUE)) %>%
-    # Tabelle komprimieren: 2 Nachkommastellen
-    mutate_if(is.numeric, ~round(., 2))
+tensio <- tensio %>% #as_tibble() %>%
+  mutate_at(c("pf_0020", "pf_2040", "pf_4060"), 
+            list(nFK = nfk_fun)) %>%
+  rename_with(.cols = ends_with("_nfK"), ~gsub("pf_", "T", .x, fixed = TRUE)) %>%
+  # Tabelle komprimieren: 2 Nachkommastellen
+  mutate_if(is.numeric, ~round(., 2))
 ```
 
 
 ### Tabelle formatieren für ggplot
 ```{r}
 tensio_melted <- tidyr::pivot_longer(tensio %>% 
-                                         select(c("wasser_level","zeit_messung", 
-                                                  "T0020_nFK", "T2040_nFK" ,"T4060_nFK")), 
+                                       select(c("satz_id","wasser_level","zeit_messung", 
+                                                "T0020_nFK", "T2040_nFK" ,"T4060_nFK")), 
                                      cols = c("T0020_nFK", "T2040_nFK" ,"T4060_nFK"),
-                                     # cols = c("parzelle_name", "zeit_messung" ), 
                                      names_to = "Bodentiefe", 
                                      values_to = "nFK_prozent") %>%
-    mutate(Bodentiefe = substr(Bodentiefe,4,5) %>% as.numeric) %>%
-    mutate(kategorie = factor("nFK", levels=c("wasserinput","nFK")))
+  mutate(Bodentiefe = substr(Bodentiefe,4,5) %>% as.numeric) %>%
+  mutate(kategorie = factor("nFK", levels=c("wasserinput","nFK")))
 ```
 
 #Tensio bei 0cm erweitern
 ```{r}
 tensio0 <- tensio_melted %>% filter(Bodentiefe == 20) %>%
-    mutate(Bodentiefe = 0)
+  mutate(Bodentiefe = 0)
 
 tensio_melted <- bind_rows(tensio_melted, tensio0)
+
+rm(tensio0)
 ```
 
-### Wetter- und Bewässerungsdaten einlesen:
-```{r}
-#path1 <- "../data/raw_data/2020_025_Spinat_F4a_Satz_2_Klimadaten.csv"
-path1 <- "../data/raw_data/2021_008_Spinat_F6_S1_Klimadaten.csv"
-wetter <- read.csv(path1, sep=";", dec=",") %>%
-    mutate_at("Datum", ~as_date(.))
-
-#path1 <- "../data/raw_data/2020_025_Spinat_F4a_S2_Bewaesserung/2020_025_Spinat_F4a_Satz_2_Wassermengen_Parzellen.csv"
-path1 <- "../data/raw_data/2021_008_Spinat_F6_S1_Bewaesserung/2021_008_F6_Spinat_Wassermengen.csv"
-
-bewaesserung <- read.csv(path1, sep = ";") %>%
-    mutate_at("Datum", ~as_date(., format="%d.%m.%y"))
-```
 
 ### Wetter- und Bewässerungsdaten formatieren und zusammenführen
 ```{r}
-zeit <- range(tensio$zeit_messung)
 bewaesserung_mean <- bewaesserung %>% 
-    #Varianten nach Bewässerungs-Stufe aufteilen:
-    mutate(wasser_level = case_when(Variante %in% c(1) ~ "Wfull_plus", #c(999)
-                                    Variante %in% c(2,3) ~ "Wfull", #c(1,2,3)
-                                    Variante == 4 ~ "Wred",
-                                    T ~ "Leerwert")) %>%
-    group_by(Datum, wasser_level) %>%
-    summarise(bewaesserung_mm =  mean(Wassermengen_mm))
+  rename(wasser_level = variante_H2O) %>%
+  group_by(satz_id, datum_bewaesserung, wasser_level) %>%
+  summarise(bewaesserung_mm =  mean(wassermengen_mm)) %>% 
+  ungroup
 
-wasser_gesamt <- wetter %>% 
-    filter(Datum %in% zeit[1]:zeit[2]) %>%
-    select(Datum, P) %>% 
-    #jeweils alle Varianten anfügen
-    slice(rep(1:n(), each = 3)) %>%
-    mutate(wasser_level = rep(c("Wfull_plus", "Wfull", "Wred"), length.out = n())) %>%
-    left_join(bewaesserung_mean, by = c("Datum", "wasser_level")) %>%
-    #Faktorstufen sortieren (für Grafik)
-    mutate_at("wasser_level", ~factor(., levels = c("Wfull_plus", "Wfull", "Wred"))) %>%
-    tidyr::pivot_longer(cols = c("bewaesserung_mm", "P"), 
-                        names_to = "variable", values_to = "value") %>%
-    mutate(kategorie = factor("wasserinput", levels=c("wasserinput","nFK")))
+
+#Bewaesserung und Niederschlag in eine Tabelle zusammenfuehren
+wasser_gesamt <- tensio %>% select(satz_id,wasser_level, zeit_messung) %>%
+  left_join(wetter, by=c("zeit_messung" = "datum_wetter")) %>% 
+  left_join(bewaesserung_mean, by = c("satz_id","wasser_level", "zeit_messung"="datum_bewaesserung")) %>%
+  #Faktorstufen sortieren (für Grafik)
+  tidyr::pivot_longer(cols = c("bewaesserung_mm", "niederschlag_mm"), 
+                      names_to = "variable", values_to = "value") %>%
+  mutate(kategorie = factor("wasserinput", levels=c("wasserinput","nFK"))) %>%
+  mutate_at("wasser_level", ~factor(., levels = c("Wfull_plus", "Wfull", "Wred")))
 ```
 
 
 
 ### nFK plotten
 ```{r}
-# Legende einlesen:
-# path2 <- "../../WMS_WFS_Bodenfeuchte/GIS/Legende.csv"
-# legende_df <- data.table::fread(path2, encoding = "Latin-1") 
-
-# Farben und Klassenbreite anfuegen:
-# Style des Bodenfeuchteviewers #https://www.dwd.de/DE/fachnutzer/landwirtschaft/5_bofeuview/_node.html
-# if (color_style == "DWD") {
-# my_colors <- c("#c8642d", "#fac83c", "#fafa4b", "#96dc4b", "#4b964b", "#32c8fa", "#0000fa", "#ffffff")
-# my_breaks <- c(0, 10, 30, 50, 80, 100, 120, Inf)
-# my_labels <- paste0(
-#     legende_df$Legende_Bezeichnung_DE,
-#     " [", legende_df$Legende_Wertebereich_nFK, "]"
-# )
-#} else if (color_style == "10_prozent") {
-
-# Style: 10%nFK-Schritte 0-120% nFK
-# my_breaks <- c(seq(from = 0, to = 120, by = 10), Inf)
-# my_colors <- colorRampPalette(c(
-#     "brown", "yellow", "forestgreen",
-#     "lightblue", "blue", "darkblue"
-# ))(length(my_breaks))
-# my_labels <- levels(cut(tensio_melted$nFK_prozent, breaks = my_breaks))
-#} 
-#
-my_breaks <- c(seq(from = 0, to = 120, by = 10), Inf)
-my_colors <- c(colorRampPalette(c("brown", "#fac83c"))(6),
-               colorRampPalette(c("lightgreen", "forestgreen"))(3),
-               colorRampPalette(c("#32c8fa", "darkblue"))(4))
-my_labels <- levels(cut(tensio_melted$nFK_prozent, breaks = my_breaks))
-
-
-```
-
-
-```{r}
-# plot erstellen: #-Bodentiefe, da der Wert die "bis"-Bodentiefe beschreibt
-p <- ggplot() +
-    geom_contour_filled(data = tensio_melted,
+# plot erstellen: #minus-Bodentiefe, da der Wert die "bis"-Bodentiefe beschreibt
+plot_nfk <- function(satz_nr, subtitle){
+  my_breaks <- c(seq(from = 0, to = 120, by = 10), Inf)
+  my_colors <- c(colorRampPalette(c("brown", "#fac83c"))(6),
+                 colorRampPalette(c("lightgreen", "forestgreen"))(3),
+                 colorRampPalette(c("#32c8fa", "darkblue"))(4))
+  my_labels <- levels(cut(tensio_melted$nFK_prozent, breaks = my_breaks))
+  
+  
+  p <- ggplot() +
+    geom_contour_filled(data = tensio_melted %>% filter(satz_id == satz_nr),
                         aes(x = zeit_messung, y = -(Bodentiefe), z = nFK_prozent),
                         breaks = my_breaks) +
     scale_colour_manual("Soil moisture (% nFK)",
                         values = my_colors, labels = my_labels,
                         aesthetics = "fill", drop = FALSE
     ) +
-    # "drop = FALSE" ist notwendig um auch Werte anzuzeigen (und die Farben zu scalen), die nicht ueber den Wertebereich in der CSV hinausgehen (z.B. <10 oder >120 % nFK)
+    # "drop = FALSE" ist notwendig um auch Werte anzuzeigen (und die Farben zu scalen), 
+    # die nicht ueber den Wertebereich in der CSV hinausgehen (z.B. <10 oder >120 % nFK)
     labs(title = "Bodenfeuchte und Wassereintrag für drei Behandlungen", 
-         subtitle = "Versuch: 2021_008_Spinat_F6_S1", 
+         subtitle = subtitle, 
          x = "Date",
          y = ""#"Soil depth (cm)"
     ) +
     ggnewscale::new_scale("fill") + #zweite fill-scale für Regen und Bewässerung
     # Regen und Bewässerung anfügen
-    geom_col(data = wasser_gesamt, aes(Datum, value, fill = variable)) +
+    geom_col(data = wasser_gesamt %>% filter(satz_id == satz_nr), 
+             aes(zeit_messung, value, fill = variable)) +
     scale_fill_manual("Wassereintrag (mm)", 
-                      values = c("P" = "gray70",
+                      values = c("niederschlag_mm" = "gray70",
                                  "bewaesserung_mm" = "gray40"), 
-                      labels =c("P" = "Regen",
+                      labels =c("niederschlag_mm" = "Regen",
                                 "bewaesserung_mm" = "GS")) + 
     facet_grid(kategorie~wasser_level, scales = "free_y", switch = "y",space = "free_y",
                labeller = labeller(.rows = as_labeller(c(nFK = "Bodentiefe (cm)", 
                                                          wasserinput = "Wassereintrag (mm)")), 
-                                   .cols = label_value)) +
+                                   .cols = label_value), 
+               drop = FALSE) + #damit auch Wfull_plus in Satz1 dargestellt wird (ohne Daten)
     theme_bw() + theme(panel.grid = element_blank(), 
                        strip.placement = "outside",
                        strip.background.y = element_blank(), 
                        panel.spacing = unit(0, "lines")
                        #strip.switch.pad.grid = unit('0.0', "cm")
     ) 
-# Ausgabe des Plots
-p
+  # Ausgabe des Plots
+  p
+}
+```
+
+#Plot-Funktion ausfuehren
+```{r message=FALSE, eval=FALSE}
+p2 <- plot_nfk(satz_nr = 2, subtitle = "2020, Satz 2, Feld 4a (*Paper VI über diese Daten)")
+p3 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6")
+p4 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b")
+p5 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6")
+
+plot_list <- list(p2, p3, p4, p5)
+#p2; p3; p4; p5
 ```
 
 #Grafik speichern
 ```{r}
-file1 <- "../graphics/nFK_2021_Satz1_Bild5.png"
-# file1 <- "../graphics/nFK_2020_Satz2_Bild1.png"
-# ggsave(filename = file1, plot = p, device = "png", width = 10, height = 6, dpi = 300)
+# file_list <- list(
+# #file1 <- #keine Tensiometer-Daten fuer Satz 1
+# file2 = "../graphics/nFK_2020_Satz2.png",
+# file3 = "../graphics/nFK_2021_Satz1.png",
+# file4 = "../graphics/nFK_2021_Satz2.png",
+# file5 = "../graphics/nFK_2021_Satz3.png")
+# 
+# purrr::map2(file_list, plot_list,
+#     ~ggsave(filename = .x, plot = .y, device = "png", width = 10, height = 6, dpi = 300)
+# )
 ```
+
+\
+\
+![test](../graphics/nFK_2020_Satz2.png)
+\
+\
+![test](../graphics/nFK_2021_Satz1.png)
+\
+\
+![test](../graphics/nFK_2021_Satz2.png)
+\
+\
+![test](../graphics/nFK_2021_Satz3.png)
+
+
 
 #nFK-Tabelle speichern
 ```{r}
