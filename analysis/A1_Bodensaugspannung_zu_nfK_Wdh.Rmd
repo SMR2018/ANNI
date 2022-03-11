@@ -8,6 +8,9 @@ output:
     df_print: paged
 ---
 
+```{r setoptions, echo = FALSE, include=FALSE}
+knitr::opts_chunk$set(warnings=FALSE, message = FALSE, cache=TRUE)
+```
 
 ### Wasserhaltevermögen der Felder der HGU:
 |Schicht Nr.|Bezeichnung|100%nFK entsprechen|"Wassergehalt (Vol.% bei 100%nFK)"|
@@ -186,10 +189,6 @@ rm(tensio0)
 ```{r}
 #Wenn nach Wiederholung unterschieden, dann kein Mittelwert. Wenn nach Variante, dann Mittelwert
 bewaesserung_mean <- bewaesserung %>% rename(bewaesserung_mm = wassermengen_mm)
-#     bewaesserung %>%
-#     group_by(satz_id, datum_bewaesserung, variante_H2O, wiederholung) %>%
-#     summarise(bewaesserung_mm = mean(wassermengen_mm)) %>%
-#     ungroup()
 
 
 # Bewaesserung und Niederschlag in eine Tabelle zusammenfuehren
@@ -206,42 +205,110 @@ wasser_gesamt <- tensio %>%
   ) %>%
   mutate(kategorie = factor("wasserinput", levels = c("wasserinput", "nFK"))) %>%
   mutate_at("variante_H2O", ~ factor(., levels = c("Wfull_plus", "Wfull", "Wred")))
+
+
+#stacked values anfuegen fuer plot:
+stacked_bars_plot <- function(data, gruppen){
+  data %>% 
+    group_by_at(vars(gruppen)) %>%
+    mutate_at("value", ~ifelse(is.na(.), 0, .)) %>% 
+    mutate(value_stacked = cumsum(value)) %>% 
+    mutate(value_min = ifelse(variable == "bewaesserung_mm", 0, value[1])) %>% 
+    mutate_at(c("value_stacked", "value_min"),~ifelse( value == 0, NA, .)) %>%
+    ungroup()
+}
+
+wasser_gesamt <- stacked_bars_plot(data = wasser_gesamt, 
+                                   gruppen = c("kategorie", "satz_id", "variante_H2O",
+                                               "wiederholung", "zeit_messung"))
+
+
+
 ```
 
+#Standardabweichung der Wiederholung
+###Daten
+```{r}
+#filter: satz_id == satz_nr, variante_H2O == variante
+satz_nr = 5; variante = "Wfull_plus"
+tensio_sd <- tensio_melted %>% 
+  pivot_wider(id_cols = c("kategorie", 
+                          "satz_id", "variante_H2O",##
+                          "zeit_messung", "Bodentiefe"), 
+              names_from = "wiederholung", values_from = "nFK_prozent") %>%
+  rowwise() %>%
+  mutate(nfK_sd = sd(c(a,b,c,d), na.rm = TRUE)) %>% 
+  select(-a, -b, -c, -d) %>%
+  ungroup
 
+wasser_gesamt_sd <- wasser_gesamt %>% 
+  filter(variable != "niederschlag_mm")  %>% 
+  #niederschlag_mm ausschließen, da alle Wiederholungen gleich.
+  pivot_wider(id_cols = c("kategorie",
+                          "satz_id", "variante_H2O", ##
+                          "variable", "zeit_messung"), 
+              names_from = "wiederholung", values_from = "value") %>%
+  rowwise() %>%
+  mutate(wasser_sd = sd(c(a,b,c,d), na.rm = TRUE)) %>% 
+  mutate_at("wasser_sd", ~ifelse(.==0, NA,.)) %>%
+  select(-a, -b, -c, -d) %>%
+  ungroup
+```
 
 ### nFK plotten
 ```{r}
 # plot erstellen: #minus-Bodentiefe, da der Wert die "bis"-Bodentiefe beschreibt
 plot_nfk <- function(satz_nr, subtitle, wdh = FALSE, variante = NULL) {
   #plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6", wdh = TRUE, variante = "Wfull_plus")
-  
+  # tensio_melted2 <- tensio_melted %>% 
+  #   group_by(kategorie, satz_id, variante_H2O,wiederholung,Bodentiefe) %>%
+  #   mutate_at("zeit_messung", ~c(0,diff(.))) %>%
+  #       mutate_at("zeit_messung", ~cumsum(.))  %>% ungroup()
+  # 
+  # wasser_gesamt2 <- wasser_gesamt %>% 
+  #   group_by(kategorie, satz_id, variante_H2O,wiederholung,variable) %>%
+  #   mutate_at("zeit_messung", ~c(0,diff(.))) %>%
+  #       mutate_at("zeit_messung", ~cumsum(.)) %>% ungroup()
+
   
   #Pro Variante oder einzeln fuer Wiederholung:
-  if(isFALSE(wdh)) { #== alle Wiederholungen einer Variante
+  if(isFALSE(wdh)) { #== Mittelwert aller Wiederholungen einer Variante
     
-    tensio_melted <- tensio_melted %>% 
+    tensio_melted2 <- tensio_melted2 %>% 
       filter(satz_id == satz_nr) %>%
       group_by(kategorie, satz_id, variante_H2O, Bodentiefe, zeit_messung) %>%
       summarise(nFK_prozent = mean(nFK_prozent, na.rm = TRUE)) %>%
       ungroup();
     
-    wasser_gesamt <- wasser_gesamt %>% 
+    wasser_gesamt2 <- wasser_gesamt2 %>% 
       filter(satz_id == satz_nr) %>%
       group_by(kategorie, variable, satz_id, variante_H2O, zeit_messung) %>%
       summarise(value = mean(value, na.rm = TRUE)) %>%
-      ungroup();
+      ungroup() %>%
+      stacked_bars_plot(gruppen = c("kategorie", "satz_id", "variante_H2O","zeit_messung"));    
     
-  } else {
-    # tensio_melted <- tensio_melted %>% filter(satz_id == satz_nr & wiederholung == wdh);
-    # wasser_gesamt <- wasser_gesamt %>% filter(satz_id == satz_nr & wiederholung == wdh)
-    tensio_melted <- tensio_melted %>% filter(satz_id == satz_nr & variante_H2O == variante);
-    wasser_gesamt <- wasser_gesamt %>% filter(satz_id == satz_nr & variante_H2O == variante)
     
+  } else { #== Wiederholungen einer Variante vergleichen
+    tensio_melted2 <- tensio_melted2 %>% filter(satz_id == satz_nr & variante_H2O == variante);
+    wasser_gesamt2 <- wasser_gesamt2 %>% filter(satz_id == satz_nr & variante_H2O == variante);
+    
+    #SD-Daten
+    wasser_gesamt_sd2 <- wasser_gesamt_sd %>%  
+      filter(satz_id == satz_nr & variante_H2O == variante) %>%
+      mutate(wiederholung = "Stabw")
+    
+    tensio_sd2 <- tensio_sd %>%  
+      filter(satz_id == satz_nr & variante_H2O == variante) %>%
+      mutate(wiederholung = "Stabw")
+    
+    #Farben des SD-Plots (Grau-Skala)
+    my_breaks_sd <- c(seq(from = 0, to = 30, by = 5), Inf);
+    my_colors_sd <- grey.colors(7, start = 0.1, end = 0.8, rev = TRUE);
+    my_labels_sd <- levels(cut(tensio_sd2$nfK_sd, breaks = my_breaks_sd))
   }
   
   
-  #Farbspektrum definieren:
+  #Farbspektrum definieren für nFK:
   my_breaks <- c(seq(from = 0, to = 120, by = 10), Inf)
   my_colors <- c(
     colorRampPalette(c("brown", "#fac83c"))(6),
@@ -253,72 +320,108 @@ plot_nfk <- function(satz_nr, subtitle, wdh = FALSE, variante = NULL) {
   
   #gg-Plot-Funktion:
   p <- ggplot() +
+    # nFK anfügen:
     geom_contour_filled(
-      data = tensio_melted,
+      data = tensio_melted2,
       aes(x = zeit_messung, y = -(Bodentiefe), z = nFK_prozent),
-      breaks = my_breaks
+      breaks = my_breaks, 
     ) +
-    scale_colour_manual("Soil moisture (% nFK)",
-                        values = my_colors, labels = my_labels,
-                        aesthetics = "fill", drop = FALSE
+    scale_fill_manual("Bodenfeuchte (% nFK)",
+                      values = my_colors, 
+                      labels = my_labels, 
+                      drop = FALSE
     ) +
     # "drop = FALSE" ist notwendig um auch Werte anzuzeigen (und die Farben zu scalen),
     # die nicht ueber den Wertebereich in der CSV hinausgehen (z.B. <10 oder >120 % nFK)
-    labs(
-      title = "Bodenfeuchte und Wassereintrag für drei Behandlungen",
-      subtitle = subtitle,
-      x = "Date",
-      y = ""
+    labs(title = "Bodenfeuchte und Wassereintrag Spinat-Versuch",
+         subtitle = subtitle, x = "Date", y = ""
     ) +
-    ggnewscale::new_scale("fill") + # zweite fill-scale für Regen und Bewässerung
-    # Regen und Bewässerung anfügen
-    geom_col(
-      data = wasser_gesamt,
-      aes(zeit_messung, value, fill = variable)
-    ) +
-    scale_fill_manual("Wassereintrag (mm)",
-                      values = c(
-                        "niederschlag_mm" = "gray70",
-                        "bewaesserung_mm" = "gray40"
-                      ),
-                      labels = c(
-                        "niederschlag_mm" = "Regen",
-                        "bewaesserung_mm" = "GS"
-                      )
-    ) +
+    
+    
+    
+    # Regen und Bewässerung anfügen:
+    geom_segment(data=wasser_gesamt2,
+                 aes(x = zeit_messung, y =value_min,
+                     xend = zeit_messung, yend = value_stacked,
+                     position = "dodge",
+                     # geom_col(data=wasser_gesamt,
+                     #          aes(x = zeit_messung, y= value,
+                     color = variable), fill=NA, size=1.5) +
+    scale_color_manual("Wassereintrag (mm)",
+                       values = c("niederschlag_mm" = "gray70",
+                                  "bewaesserung_mm" = "gray10"),
+                       labels = c("niederschlag_mm" = "Regen",
+                                  "bewaesserung_mm" = "GS")
+    ) 
+    
+    # scale_x_date(date_labels =  wasser_gesamt %>% 
+    #                slice(5:(n()-5)) %>% 
+    #                pull(zeit_messung) %>% 
+    #                pretty(n=3) %>% 
+    #                format.Date("%d.%m")
+    # )
+  # scale_x_date(date_labels = "%d.%m", date_breaks = "2 weeks",
+  #              #damit sich die Zeitbeschriftungen nicht ueberschneiden;
+  #           limits = c(min(wasser_gesamt$zeit_messung, na.rm = TRUE) +5 , 
+  #                      max(wasser_gesamt$zeit_messung, na.rm = TRUE) -5))
+  
+  
+  # Standardabweichung anfügen:
+  p <-    if(isTRUE(wdh)){ 
+    p+  ggnewscale::new_scale("fill")+ # zweite fill-scale für SD-Plot
+      geom_contour_filled(
+        data = tensio_sd2,
+        aes(x = zeit_messung, y = -(Bodentiefe), z = nfK_sd),
+        breaks = my_breaks_sd, 
+      ) +
+      scale_fill_manual("Stabw Bodenfeuchte (% nFK)",
+                        values = my_colors_sd, 
+                        labels = my_labels_sd, 
+                        drop = FALSE
+      ) +
+      geom_segment(data=wasser_gesamt_sd2,
+                   aes(x = zeit_messung, y =0,
+                       xend = zeit_messung, yend = wasser_sd,
+                       color = variable),fill=NA, size=1)
+  } else {p}
+  
+  
+  # Facets anfügen:
+  p<- p+
     facet_grid(kategorie ~ if(isFALSE(wdh)){variante_H2O} else {wiederholung},
                scales = "free_y", switch = "y", space = "free_y",
                labeller = labeller(
                  .rows = as_labeller(
-                   c(
-                     nFK = "Bodentiefe (cm)",
-                     wasserinput = "Wassereintrag (mm)"
-                   )
-                 ),
-                 .cols = label_value
-               ),
-               drop = FALSE
-    ) + # damit Wfull_plus in Satz1 dargestellt wird (ohne Daten)
+                   c(nFK = "Bodentiefe (cm)",
+                     wasserinput = "Wassereintrag (mm)")),
+                 .cols = label_value),
+               drop = FALSE # damit Wfull_plus in Satz1 dargestellt wird (ohne Daten)
+    ) + 
     theme_bw() +
     theme(
       panel.grid = element_blank(),
       strip.placement = "outside",
       strip.background.y = element_blank(),
-      panel.spacing = unit(0, "lines")
-    )
+      panel.spacing = unit(0, "lines"),
+      legend.key.size = unit(12, units = "pt"),
+      legend.key.width = unit(12, units = "pt")
+    ) +
+    guides(col = guide_legend(order = 1))
+  
+  
   # Ausgabe des Plots
   p
 }
 ```
 
+
 #Plot-Funktion ausfuehren
 ```{r message=FALSE, eval=FALSE}
-p2 <- plot_nfk(satz_nr = 2, subtitle = "2020, Satz 2, Feld 4a (*Paper über diese Daten)")
-p3 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6")
-p4 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b")
-p5 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6")
+p2 <- plot_nfk(satz_nr = 2, subtitle = "2020, Satz 2, Feld 4a (*Paper)", wdh = FALSE)
+p3 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6", wdh = FALSE)
+p4 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b", wdh = FALSE)
+p5 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE)
 
-plot_list <- list(p2, p3, p4, p5)
 p2; p3; p4; p5
 ```
 
@@ -331,7 +434,7 @@ p2; p3; p4; p5
 # file4 = "../graphics/nFK_2021_Satz2.png",
 # file5 = "../graphics/nFK_2021_Satz3.png")
 # 
-# purrr::map2(file_list, plot_list,
+# purrr::map2(file_list, list(p2, p3, p4, p5),
 #     ~ggsave(filename = .x, plot = .y, device = "png", width = 10, height = 6, dpi = 300)
 # )
 ```
@@ -349,160 +452,69 @@ p2; p3; p4; p5
 \
 ![test](../graphics/nFK_2021_Satz3.png)
 
-### Plots pro Variante:
+### Plots pro Variante (== Vergleich der Wiederholungen):
 ```{r}
-#2020 Satz2: nur an zwei Stellen Tensiometer
-plot_nfk(satz_nr = 2, subtitle = "2020, Satz 2, Feld 4a, Variante 'Wfull'", 
-         wdh = TRUE, variante = "Wfull")
-plot_nfk(satz_nr = 2, subtitle = "2020, Satz 2, Feld 4a,  Variante 'Wred'", 
-         wdh = TRUE, variante = "Wred")
+#2020 Satz2: nur an zwei Stellen Tensiometer: keine Wiederholung.
 ```
 
-```{r}
+```{r warning=FALSE}
 #2021 Satz1
-plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wfull_plus'", 
-         wdh = TRUE, variante = "Wfull_plus")
-plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wfull'", 
-         wdh = TRUE, variante = "Wfull")
-plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wred'", 
-         wdh = TRUE, variante = "Wred")
+p1 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wfull_plus'", 
+               wdh = TRUE, variante = "Wfull_plus")
+p2 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wfull'", 
+               wdh = TRUE, variante = "Wfull")
+p3 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wred'", 
+               wdh = TRUE, variante = "Wred")
 ```
 
-```{r}
+```{r warning=FALSE}
 #2021 Satz2
-plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b, Variante 'Wfull_plus'", 
-         wdh = TRUE, variante = "Wfull_plus")
-plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b, Variante 'Wfull'", 
-         wdh = TRUE, variante = "Wfull")
-plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b, Variante 'Wred'", 
-         wdh = TRUE, variante = "Wred")
+p4 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b, Variante 'Wfull_plus'", 
+               wdh = TRUE, variante = "Wfull_plus")
+p5 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b, Variante 'Wfull'", 
+               wdh = TRUE, variante = "Wfull")
+p6 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b, Variante 'Wred'", 
+               wdh = TRUE, variante = "Wred")
 ```
 
-```{r}
+```{r warning=FALSE}
 #2021 Satz3
-p1 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wfull_plus'", 
-         wdh = TRUE, variante = "Wfull_plus")
-plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wfull'", 
-         wdh = TRUE, variante = "Wfull")
-plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wred'", 
-         wdh = TRUE, variante = "Wred")
-
+p7 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wfull_plus'", 
+               wdh = TRUE, variante = "Wfull_plus")
+p8 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wfull'", 
+               wdh = TRUE, variante = "Wfull")
+p9 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wred'", 
+               wdh = TRUE, variante = "Wred")
 ```
 
+#Grafiken der Wiederholung speichern
+```{r message=FALSE, warning=FALSE, eval=TRUE}
+file_list <- list(
+  file1 = "../graphics/nFK_2021_Satz1_Wfull_plus.png",
+  file2 = "../graphics/nFK_2021_Satz1_Wfull.png",
+  file3 = "../graphics/nFK_2021_Satz1_Wred.png",
+  file4 = "../graphics/nFK_2021_Satz2_Wfull_plus.png",
+  file5 = "../graphics/nFK_2021_Satz2_Wfull.png",
+  file6 = "../graphics/nFK_2021_Satz2_Wred.png",
+  file7 = "../graphics/nFK_2021_Satz3_Wfull_plus.png",
+  file8 = "../graphics/nFK_2021_Satz3_Wfull.png",
+  file9 = "../graphics/nFK_2021_Satz3_Wred.png")
 
-#Standardabweichung der Wiederholung
-###Daten
-```{r}
-#filter: satz_id == satz_nr, variante_H2O == variante
-satz_nr = 5; variante = "Wfull_plus"
-tensio_sd <- tensio_melted %>% 
-  filter(satz_id == satz_nr & variante_H2O == variante) %>%
-  pivot_wider(id_cols = c("kategorie", 
-                          #"satz_id", "variante_H2O",
-                          "zeit_messung", "Bodentiefe"), 
-              names_from = "wiederholung", values_from = "nFK_prozent") %>%
-  rowwise() %>%
-  mutate(nfK_sd = sd(c(a,b,c,d))) %>% 
-  ungroup
-
-wasser_gesamt_sd <- wasser_gesamt %>% 
-  filter(satz_id == satz_nr & variante_H2O == variante) %>%
-  pivot_wider(id_cols = c("kategorie","variable", "zeit_messung"), 
-              names_from = "wiederholung", values_from = "value") %>%
-  rowwise() %>%
-  mutate(wasser_sd = sd(c(a,b,c,d))) %>% 
-  ungroup 
-```
-###Grafik
-```{r}
-wasser_gesamt_sd2 <- wasser_gesamt_sd %>%
-  # fiktive sd fuer plot-Höhe:
-  bind_rows(data.frame(kategorie = "wasserinput", variable = "bewaesserung_mm",
-                       zeit_messung = as_date("1900-01-01"), wasser_sd = 20)) %>%
-  mutate_at("kategorie", ~factor(., levels = c("nFK", "wasserinput")))
-
-my_breaks <- c(seq(from = 0, to = 30, by = 5), Inf)
-my_colors <- grey.colors(7, start = 0.1, end = 0.8, rev = TRUE)
-my_labels <- levels(cut(tensio_sd$nfK_sd, breaks = my_breaks))
-
-
-#gg-Plot-Funktion:
-p <- ggplot() +
-  geom_contour_filled(
-    data = tensio_sd,
-    aes(x = zeit_messung, y = -(Bodentiefe), z = nfK_sd),
-    breaks = my_breaks
-  ) +
-  scale_colour_manual("Stabw Bodenfeuchte (% nFK)",
-                      values = my_colors, labels = my_labels,
-                      aesthetics = "fill", drop = FALSE
-  ) +
-  # "drop = FALSE" ist notwendig um auch Werte anzuzeigen (und die Farben zu scalen),
-  # die nicht ueber den Wertebereich in der CSV hinausgehen (z.B. <10 oder >120 % nFK)
-  labs(x = "Date",
-       y = ""
-  ) +
-  ggnewscale::new_scale("fill") + # zweite fill-scale für Regen und Bewässerung
-  # Regen und Bewässerung anfügen
-  geom_col(
-    data = wasser_gesamt_sd2,
-    aes(zeit_messung, wasser_sd, fill = variable), show.legend = FALSE
-  ) +
-  scale_fill_manual(#"Stabw Wassereintrag (mm)",
-                    values = c(
-                      "niederschlag_mm" = "gray70",
-                      "bewaesserung_mm" = "gray40"
-                    ),
-                    # labels = c(
-                    #   "niederschlag_mm" = "Regen",
-                    #   "bewaesserung_mm" = "GS"
-                    # )
-  ) +
-  scale_x_date(limits = range(tensio_sd$zeit_messung)) + 
-  #damit skalierungs-Wert fuer wasserinput nicht abgezeigt wird.
-  facet_grid(kategorie ~ .,
-             scales = "free_y", switch = "y", space = "free_y",
-             labeller = labeller(
-               .rows = as_labeller(
-                 c(
-                   nFK = "Bodentiefe (cm)",
-                   wasserinput = "Wassereintrag (mm)"
-                 )
-               )#,
-               #.cols = label_value
-             ),
-             drop = FALSE, # damit Wfull_plus in Satz1 dargestellt wird (ohne Daten)
-             shrink = FALSE #damit Höhe des Skalierungs-Wertes für Wasserinput angezeigt wird
-  ) + 
-  theme_bw() +
-  theme(
-    panel.grid = element_blank(),
-    strip.placement = "outside",
-    strip.background.y = element_blank(),
-    panel.spacing = unit(0, "lines")
-  )
-# Ausgabe des Plots
-p
-
+purrr::map2(file_list, list(p1,p2,p3,p4,p5,p6,p7,p8,p9),
+            ~ggsave(filename = .x, plot = .y, device = "png", width = 12, height = 6, dpi = 300)
+)
 ```
 
-```{r}
-
-
- plot_list_arranged <- ggpubr::ggarrange(plotlist = list(p1, p), 
-                                  ncol= 2, nrow = 1,
-                                  common.legend = TRUE, 
-                                  align = "hv",
-                                  legend="bottom") #%>% 
-   # annotate_figure(top = text_grob(title, face = "bold", size = 15))
- 
- plot_list_arranged
-```
-
-
-
-
-
+![aaa]("../graphics/nFK_2021_Satz1_Wfull_plus.png")
+![aaa]("../graphics/nFK_2021_Satz1_Wfull_plus.png")
+![aaa]("../graphics/nFK_2021_Satz1_Wfull.png")
+![aaa]("../graphics/nFK_2021_Satz1_Wred.png")
+![aaa]("../graphics/nFK_2021_Satz2_Wfull_plus.png")
+![aaa]("../graphics/nFK_2021_Satz2_Wfull.png")
+![aaa]("../graphics/nFK_2021_Satz2_Wred.png")
+![aaa]("../graphics/nFK_2021_Satz3_Wfull_plus.png")
+![aaa]("../graphics/nFK_2021_Satz3_Wfull.png")
+![aaa]("../graphics/nFK_2021_Satz3_Wred.png")
 
 
 #nFK-Tabelle speichern
@@ -516,4 +528,5 @@ p
 # file1 <- "../data/derived_data/bewaesserung_mean_2020_2021_20220309.csv"
 # data.table::fwrite(x = bewaesserung_mean,file = file1, sep = ";", dec = ".")
 ```
+
 
