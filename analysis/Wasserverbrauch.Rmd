@@ -6,7 +6,7 @@ output: html_notebook
 ---
 
 ```{r message=FALSE, warning=FALSE, include=FALSE}
-#library(data.table)
+library(data.table)
 library(dplyr)
 library(ggplot2)
 library(lubridate)
@@ -16,32 +16,45 @@ library(lubridate)
 \
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 ```{r}
-input_tabelle <- read.csv("../data/derived_data/input_tabelle_2021_Satz1_b.csv", 
-                          sep = ";", dec = ".") %>%
-    mutate_at("Datum", ~as_date(.))
+input_tabelle <- fread("../data/derived_data/input_tabelle_2020_2021_20220315.csv") %>%
+    mutate_at("zeit_messung", ~as_date(.)) %>%
+    mutate_at(c("T0020_nFK","T2040_nFK","T4060_nFK"), ~ifelse(.<52,NA,.)) 
+input_tabelle
+#kleinere Werte nicht im vorgegeben Bereich des Tensiometers
 ```
 
 \
 ```{r}
- wasserverbrauch <- input_tabelle %>%         
-     rowwise() %>%
-    mutate(wasserinput_mm = sum(P, bewaesserung_mm, na.rm = TRUE) ,#- FAO56, 
+wasserverbrauch <- input_tabelle %>%       
+                    # mutate_at("T0060_mm", 
+                    #           ~ifelse(is.na(T0020_nFK)|is.na(T2040_nFK)|is.na(T4060_nFK),NA,.)) %>%
+    rowwise() %>%
+    mutate(wasserinput_mm = sum(niederschlag_mm, bewaesserung_mm, na.rm = TRUE) ,
            #FAO56 ändern: genauer wäre Evapotranspiration bei unbewachsenem Boden
+           #Wenn ein Tensio-Wert fehlt, dann NA
            freier_Speicher_T0060_mm = sum(freier_Speicher_T0020_mm,
                                           freier_Speicher_T2040_mm,
-                                          freier_Speicher_T4060_mm, na.rm = TRUE)) %>% 
-    ungroup() %>%
+                                          freier_Speicher_T4060_mm, na.rm = FALSE)) %>% 
+    #    ungroup() %>%
     mutate_at("wasserinput_mm", ~ifelse(.<0,0,.)) %>%
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    #Fehlende Werte Approximieren:
+    mutate_at(c("freier_Speicher_T0060_mm","T0060_mm"), ~zoo::na.approx(., na.rm = FALSE))%>%
+                    # mutate(Tempsum2 = cumsum(Tmean_gradC), .before = Tempsum) %>%
+    
+    
+    
     mutate(wasserinput_vortag = c(0, wasserinput_mm[1:(n()-1)])) %>%
     mutate(wasserinput_vortag_cumsum = cumsum(wasserinput_vortag)) %>% ##cumsum
     mutate(T0060_mm_ohne_input = T0060_mm - wasserinput_vortag_cumsum,
-           freier_Speicher_T0060_mm_ohne_input = freier_Speicher_T0060_mm + wasserinput_vortag_cumsum) %>%
+           freier_Speicher_T0060_mm_ohne_input = freier_Speicher_T0060_mm + 
+               wasserinput_vortag_cumsum) %>%
     
     mutate(wasser_diff = c(0,diff(T0060_mm_ohne_input)),
            T0060_mm_ohne_input_smooth = zoo::rollmean(T0060_mm_ohne_input, 
                                                       k = 5, align = "center", na.pad = TRUE),
-           kumulierter_Wasserverbrauch = freier_Speicher_T0060_mm_ohne_input - min(freier_Speicher_T0060_mm_ohne_input, na.rm = TRUE)) %>%
-    mutate(tempsum = cumsum(Tmean))%>% 
+           kumulierter_Wasserverbrauch = freier_Speicher_T0060_mm_ohne_input - 
+               min(freier_Speicher_T0060_mm_ohne_input, na.rm = TRUE)) %>%
     mutate(kumulierter_Wasserverbrauch_smooth = 
                zoo::rollmean(kumulierter_Wasserverbrauch, 
                              k = 5, align = "center", na.pad = TRUE)) %>%
@@ -49,20 +62,32 @@ input_tabelle <- read.csv("../data/derived_data/input_tabelle_2021_Satz1_b.csv",
     mutate_at("kumulierter_Wasserverbrauch_smooth", 
               ~zoo::rollmean(., k = 5, align = "center", na.pad = TRUE)) %>%
     mutate_at("kumulierter_Wasserverbrauch_smooth", ~ifelse(is.na(.), kumulierter_Wasserverbrauch,.)) %>%
-    mutate(taeglicher_wasserverbrauch = c(NA, diff(kumulierter_Wasserverbrauch_smooth)))
+    mutate(taeglicher_wasserverbrauch = c(NA, diff(kumulierter_Wasserverbrauch_smooth)))%>%
+    ungroup
 ```
 \
 ### Gesamt-Wasserinput während der beobachteten Kultivierungsperiode:
 ```{r}
-paste("Der gesamte Wassereintrag (Niederschlag  + Bewässerung - Verdunstung) beträgt:",sum(wasserverbrauch$wasserinput_mm, na.rm = TRUE) %>% round(., 2), "mm")
+m <- wasserverbrauch %>% 
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    summarize(Verbrauch = sum(wasserinput_mm, na.rm = TRUE)) %>%
+    group_by(variante_H2O) %>%
+    summarize(Verbrauch = mean(Verbrauch, na.rm = TRUE) %>% round(., 2))
+
+cat(paste("Der gesamte Wassereintrag (Niederschlag  + Bewässerung - Verdunstung) beträgt:mm"))
+m
 ```
 
 ```{r}
-plot_wassergehalt <- function(x){
-    mm_max <- max(wasserverbrauch$T0060_mm, na.rm = TRUE)
-    breite <- (range(pull(wasserverbrauch,x), na.rm = TRUE) %>% diff)*0.008
+plot_wassergehalt <- function(satz_nr, variante, wdh, x){
     
-    p <- ggplot(wasserverbrauch, aes(!!sym(x),T0060_mm)) +
+    data1 <- wasserverbrauch %>% filter(satz_id ==satz_nr, 
+                                        variante_H2O == variante, 
+                                        wiederholung == wdh)
+    mm_max <- max(data1$T0060_mm, na.rm = TRUE)
+    breite <- (range(pull(data1,x), na.rm = TRUE) %>% diff)*0.008
+    
+    p <- ggplot(data1, aes(!!sym(x),T0060_mm)) +
         #Wasser-Input:
         geom_rect(aes(xmin = !!sym(x)  - breite, #Tage_seit_Aussaat oder tempsum
                       xmax = !!sym(x) + breite, #Tage_seit_Aussaat oder tempsum
@@ -83,11 +108,19 @@ plot_wassergehalt <- function(x){
         theme(panel.grid.major.y  = element_blank(), 
               panel.grid.minor.y = element_blank(), 
               axis.title.y.right = element_text(hjust = 0.05, vjust = 1)) 
-    p}
-plot_wassergehalt(x = "Tage_seit_Aussaat")
-plot_wassergehalt(x = "tempsum")
-
+    p
+}
 ```
+
+
+```{r}
+plot_wassergehalt(x = "tage_seit_aussaat", satz_nr = 5, variante = "Wfull", wdh = "a")
+plot_wassergehalt(x = "tage_seit_aussaat", satz_nr = 5, variante = "Wfull_plus", wdh = "b")
+
+#plot_wassergehalt(x = "Tempsum", satz_nr = 5, variante = "Wfull", wdh = "a")
+```
+
+
 ### Sigmoide Kurve fitten:
 ```{r}
 #Modell erstellen
@@ -119,16 +152,20 @@ wasserverbrauch$kumulierter_Wasserverbrauch_sigmoid_tage <- sigmoid_fit_tage
 ```{r}
 wasserverbrauch <- 
     wasserverbrauch %>% 
+    group_by(satz_id, variante_H2O, wiederholung) %>%
     # left_join(sigmoid_fit_df %>% 
     #               rename(kumulierter_Wasserverbrauch_sigmoid = kumulierter_Wasserverbrauch), 
     #           by = "tempsum") %>%
-    mutate(tempsum_diff = c(0, diff(tempsum))) %>%
-    mutate(taeglicher_wasserverbrauch_sigmoid_tempsum = c(0, diff(kumulierter_Wasserverbrauch_sigmoid_tempsum)) / tempsum_diff) %>%
+    mutate(tempsum_diff = c(0, diff(Tempsum))) %>%
+    #    mutate(taeglicher_wasserverbrauch_sigmoid_tempsum = c(0, diff(kumulierter_Wasserverbrauch_sigmoid_tempsum)) / tempsum_diff) %>%
     
-    mutate(taeglicher_wasserverbrauch_sigmoid = c(NA, diff(kumulierter_Wasserverbrauch_sigmoid_tage))) %>%
+    #    mutate(taeglicher_wasserverbrauch_sigmoid = c(NA, diff(kumulierter_Wasserverbrauch_sigmoid_tage))) %>%
     mutate(taeglicher_wasserverbrauch_smooth = 
-               zoo::rollmean(taeglicher_wasserverbrauch, k = 5, align = "center", na.pad = TRUE)) #%>%
-#mutate_at("taeglicher_wasserverbrauch_smooth", ~ifelse(is.na(.), taeglicher_wasserverbrauch,.))
+               zoo::rollmean(taeglicher_wasserverbrauch, k = 5, align = "center", na.pad = TRUE)) %>%
+#mutate_at("taeglicher_wasserverbrauch_smooth", ~ifelse(is.na(.), taeglicher_wasserverbrauch,.)) %>%
+    ungroup %>%
+    mutate(wasser_sum = cumsum(wasserinput_mm), .before=wasserinput_mm) %>%
+    mutate(x_temp_wasser_sum = Tempsum*wasser_sum, .before=wasserinput_mm)
 
 ```
 
@@ -148,25 +185,66 @@ wasserverbrauch <-
 
 ### Kumulierten Wasserverbrauch und Regressions plotten:
 ```{r}
-plot_wasser_cumsum <- function(x, fit){
-    ggplot(data = wasserverbrauch, aes(!!sym(x),
-                                       kumulierter_Wasserverbrauch)) + 
+plot_wasser_cumsum <- function(x, satz_nr, variante, wdh, log=FALSE){ #fit
+    
+    data1 <- wasserverbrauch %>% filter(satz_id ==satz_nr, 
+                                        variante_H2O == variante,
+                                        wiederholung == wdh) 
+    ggplot(data = data1, 
+           aes(if(log == TRUE){log(!!sym(x))}else{!!sym(x)},
+                             kumulierter_Wasserverbrauch)) + 
         geom_point(aes(color = "gemessen")) + geom_line(aes(color = "gemessen")) + 
-        geom_line(data = wasserverbrauch,
-                  aes(!!sym(x),!!sym(fit),
-                      color = "sigmoid fit"),size=1) +
-        geom_line(aes(y=kumulierter_Wasserverbrauch_smooth, color = "runmean_5"),size=1) +
+        # geom_line(data = wasserverbrauch,
+        #           aes(!!sym(x),!!sym(fit),
+        #               color = "sigmoid fit"),size=1) +
+        geom_line(aes(y=kumulierter_Wasserverbrauch_smooth, color = "runmean_5"), size=1) +
         ylab("Kumulierter Wasserverbrauch (mm)") +
         theme_bw() + 
         theme(panel.grid = element_blank()) + 
         scale_color_manual(values = c("gemessen"="black", 
-                                      "runmean_5"="deeppink", "sigmoid fit" = "deepskyblue"))
+                                      "runmean_5"="deeppink"))#, "sigmoid fit" = "deepskyblue"))
 }
 
-plot_wasser_cumsum("Tage_seit_Aussaat", fit = "kumulierter_Wasserverbrauch_sigmoid_tage")
-plot_wasser_cumsum("tempsum", fit = "kumulierter_Wasserverbrauch_sigmoid_tempsum")
+# plot_wasser_cumsum("tage_seit_Aussaat", fit = "kumulierter_Wasserverbrauch_sigmoid_tage")
+# plot_wasser_cumsum("Tempsum", fit = "kumulierter_Wasserverbrauch_sigmoid_tempsum")
 
 ```
+
+```{r}
+plot_wasser_cumsum("tage_seit_aussaat",  satz_nr = 5, variante = "Wfull", wdh = "a", log = FALSE)
+plot_wasser_cumsum("tage_seit_aussaat",  satz_nr = 5, variante = "Wfull", wdh = "a", log = TRUE)
+plot_wasser_cumsum("x_temp_wasser_sum",  satz_nr = 5, variante = "Wfull", wdh = "a", log = FALSE)
+plot_wasser_cumsum("x_temp_wasser_sum",  satz_nr = 5, variante = "Wfull", wdh = "a", log = TRUE)
+
+plot_wasser_cumsum("tage_seit_aussaat",  satz_nr = 5, variante = "Wfull", wdh = "b")
+plot_wasser_cumsum("tage_seit_aussaat",  satz_nr = 5, variante = "Wfull", wdh = "c")
+plot_wasser_cumsum("tage_seit_aussaat",  satz_nr = 5, variante = "Wfull", wdh = "d")
+```
+
+
+```{r}
+plot_wasser_cumsum("tage_seit_aussaat",  satz_nr = 5, variante = "Wfull_plus", wdh = "a")
+plot_wasser_cumsum("tage_seit_aussaat",  satz_nr = 5, variante = "Wfull_plus", wdh = "b")
+plot_wasser_cumsum("tage_seit_aussaat",  satz_nr = 5, variante = "Wfull_plus", wdh = "c")
+
+plot_wasser_cumsum("tage_seit_aussaat",  satz_nr = 5, variante = "Wfull_plus", wdh = "d")
+plot_wasser_cumsum("x_temp_wasser_sum",  satz_nr = 5, variante = "Wfull_plus", wdh = "d")
+plot_wasser_cumsum("x_temp_wasser_sum",  satz_nr = 5, variante = "Wfull_plus", wdh = "d", log = TRUE)
+
+```
+
+
+
+Mittleren Wasserverbrauch pro Variante berechnen:
+```{r}
+wasserverbrauch_pro_variante <- wasserverbrauch %>% ungroup() %>% 
+    select(-wiederholung) %>%
+    group_by(satz_id, variante_H2O, zeit_messung, tage_seit_aussaat)%>%
+    summarise_all(mean, na.rm=TRUE) %>%
+    mutate(wiederholung = "Varianten-Mittel", .after = variante_H2O)
+wasserverbrauch_pro_variante
+```
+
 
 ###Täglichen Wasserverbrauch plotten:
 ```{r}
@@ -175,22 +253,53 @@ plot_wasser_cumsum("tempsum", fit = "kumulierter_Wasserverbrauch_sigmoid_tempsum
 #     mutate(taeglicher_wasserverbrauch_smooth = 
 #                signal::sgolayfilt(taeglicher_wasserverbrauch,p = 3, n = 21))
 
-
-ggplot(data = wasserverbrauch, aes(Tage_seit_Aussaat, taeglicher_wasserverbrauch,
-                                   color="gemessen")) + 
-    geom_point() + geom_line() + 
-    geom_line(aes(y = taeglicher_wasserverbrauch_smooth, color = "runmean_5"),size=1) + 
-    geom_line(aes(y = taeglicher_wasserverbrauch_sigmoid,#*
-    # mean(diff(wasserverbrauch$tempsum), na.rm = TRUE), 
-    color = "sigmoid fit"),size=1) + 
-    scale_color_manual("", values = c("gemessen"="black", 
-                                      "runmean_5"="deeppink", 
-                                      "sigmoid fit" = "deepskyblue")) +
-    ylab("Täglicher Wasserverbrauch (mm)") + 
-    theme_bw() + 
-    theme(panel.grid = element_blank())
-
+plot_taeglichen_wasserverbrauch <- function(satz_nr, wdh = "Varianten-Mittel"){
+    
+    data1 <- if(wdh=="Varianten-Mittel"){wasserverbrauch_pro_variante} else{wasserverbrauch}
+    
+    data1 <- data1 %>% filter(satz_id ==satz_nr) %>%
+        filter(between(taeglicher_wasserverbrauch,0,7))
+    
+    ratio1 <-  if(wdh=="Varianten-Mittel"){2/3} else{3/4}
+    
+    ggplot(data = data1, aes(x = tage_seit_aussaat,#x_temp_wasser_sum, #, 
+                             y = taeglicher_wasserverbrauch,
+                             color="gemessen")) + 
+        geom_point() + geom_line() + 
+        geom_line(aes(y = taeglicher_wasserverbrauch_smooth, color = "runmean_5"),size=1) + 
+        # geom_line(aes(y = taeglicher_wasserverbrauch_sigmoid,#*
+        # mean(diff(wasserverbrauch$tempsum), na.rm = TRUE), 
+        # color = "sigmoid fit"),size=1) + 
+        scale_color_manual("", values = c("gemessen"="black", 
+                                          "runmean_5"="deeppink"))+#, 
+        #                                      "sigmoid fit" = "deepskyblue")) +
+        ylab("Täglicher Wasserverbrauch (mm)") + 
+        theme_bw() +
+        theme(aspect.ratio=ratio1,
+              legend.position = "bottom")+
+        facet_grid(variante_H2O~wiederholung)
+}
 ```
+
+```{r}
+#```{r, fig.height=5}
+plot_taeglichen_wasserverbrauch(satz_nr = 2, wdh = "Varianten-Mittel")
+#plot_taeglichen_wasserverbrauch(satz_nr = 2, wdh = "")
+
+plot_taeglichen_wasserverbrauch(satz_nr = 3, wdh = "Varianten-Mittel")
+#plot_taeglichen_wasserverbrauch(satz_nr = 3, wdh = "")
+
+plot_taeglichen_wasserverbrauch(satz_nr = 4, wdh = "Varianten-Mittel")
+#plot_taeglichen_wasserverbrauch(satz_nr = 4, wdh = "")
+
+plot_taeglichen_wasserverbrauch(satz_nr = 5, wdh = "Varianten-Mittel")
+#plot_taeglichen_wasserverbrauch(satz_nr = 5, wdh = "")
+```
+
+
+
+
+
 
 ```{r}
 #write.table(wasserverbrauch, "../data/derived_data/wasserverbrauch_2021_Satz1.csv", 
@@ -200,7 +309,8 @@ ggplot(data = wasserverbrauch, aes(Tage_seit_Aussaat, taeglicher_wasserverbrauch
 
 #Vergleich GS & Saugspannung
 ```{r}
-ggplot(wasserverbrauch, aes(cumsum(FAO56),kumulierter_Wasserverbrauch)) + 
+ggplot(wasserverbrauch_pro_variante %>% filter(satz_id==5 & variante_H2O == "Wfull"), 
+       aes(cumsum(FAO56_mm),kumulierter_Wasserverbrauch)) + 
     geom_smooth() + 
     geom_point() + 
     geom_abline(slope = 1, intercept = 0, aes(color="1:1-Linie")) + 
@@ -214,3 +324,10 @@ ggplot(wasserverbrauch, aes(cumsum(FAO56),kumulierter_Wasserverbrauch)) +
 
 ```
 
+#To-Do:
+- Auswaschungen berücksichtigen: mm über 100%nFK (in 40-60cm?) vom Verbrauch abziehen.
+- Verbrauch korrigieren, wenn Tensiometer-Werte für eine oder mehrere Tiefen fehlen. 
+--> Am Ende: entfernen.
+--> in der Mitte: na.approx? approx? (interpolieren)
+
+Für Bodentiefe 0-20 und 20-40cm: wenn am nächsten Tag nFK in der tieferen Schicht steigt, dann 

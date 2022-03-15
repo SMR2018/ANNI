@@ -23,10 +23,8 @@ library(neuralnet)
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 ```{r}
 input_tabelle <- data.table::fread(
-    "../data/derived_data/input_tabelle_2021_Satz1_b.csv", 
-    sep = ";", dec = ".") %>%
-    mutate_at("Datum", ~as_date(.))
-input_tabelle <- data.table::setDT(input_tabelle)
+    "../data/derived_data/input_tabelle_2020_2021_20220314.csv", 
+    sep = ";", dec = ".") %>% as_tibble()
 ```
 \
 ### nFK vom Vortag als Input ausweisen:
@@ -35,19 +33,31 @@ input_tabelle <-
     input_tabelle %>%
     mutate(T0020_nFK_Vortag = c(NA,T0020_nFK[1:(n()-1)]),
            T2040_nFK_Vortag = c(NA,T2040_nFK[1:(n()-1)]),
-           T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) %>%
-    slice(-1) #erste Zeile entfernt, da hier NA
+           T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) #%>%
+# slice(-1) #erste Zeile entfernt, da hier NA
 ```
 \
 ### Wassereintrag aus P + Bewässerung berechnen. Benötigte Variablen selektieren.
 ```{r}
-input_df <- input_tabelle %>%
-    select(T0060_mm, T0020_nFK_Vortag,T2040_nFK_Vortag, T4060_nFK_Vortag,Tage_seit_Aussaat,Tmax,Tmin,Tmean,RF,Glob,RHmin,V2,P,bewaesserung_mm) %>%
+target <- c("tage_seit_aussaat", 
+            "bewaesserung_mm", "Tempsum", "Tmax_gradC", "Tmin_gradC", "Tmean_gradC", 
+            "relLuftfeuchte_mean_prozent", "relLuftfeuchte_min_prozent", 
+            "Gobsum", "globalstrahlung_Mj_m2", "niederschlag_mm", 
+            "windgeschwindigkeit_m_s", "FAO56_mm", 
+            #"T0020_mm", "T2040_mm", "T4060_mm", 
+            "T0060_mm",
+            "T0020_nFK_Vortag", "T2040_nFK_Vortag", "T4060_nFK_Vortag")
+input_df <- input_tabelle %>% #[1:100,] %>%
+    select(satz_id, variante_H2O, target) %>%
     rowwise() %>%
-    mutate(wasser_input = sum(P, bewaesserung_mm, na.rm = TRUE)) %>%
+    mutate(wasser_input = sum(niederschlag_mm, bewaesserung_mm, na.rm = TRUE)) %>%
     ungroup %>%
     mutate(wasser_input_Vortag = c(NA,wasser_input[1:(n()-1)])) %>%
-    select(-P, -bewaesserung_mm, -wasser_input) 
+    select(-niederschlag_mm, -bewaesserung_mm, -wasser_input) %>%
+    tidyr::drop_na()
+
+idx_saetze <- input_df %>% select(satz_id, variante_H2O)
+input_df <- input_df %>% select(-satz_id, -variante_H2O)
 
 ```
 \
@@ -78,7 +88,15 @@ test <- input_df.scaled[-idx,]
 # Custom activation function
 #softplus <- function(x) log(1 + exp(x))
 
-nn=neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+Tmean+RF+Glob+RHmin+V2+wasser_input_Vortag,
+nn=neuralnet(T0060_mm ~ tage_seit_aussaat+ 
+                 Tempsum+Tmax_gradC+Tmin_gradC+Tmean_gradC+
+                 wasser_input_Vortag+
+                 T0020_nFK_Vortag+T2040_nFK_Vortag+T4060_nFK_Vortag+
+                 relLuftfeuchte_mean_prozent+relLuftfeuchte_min_prozent+
+                 Gobsum+globalstrahlung_Mj_m2+
+                 windgeschwindigkeit_m_s,
+             #Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+Tmean+RF+Glob+RHmin+V2+wasser_input_Vortag,
+             
              data=train,
              hidden=10,
              act.fct = "logistic", #softplus
@@ -113,7 +131,7 @@ Predict <- compute(nn,test)
 ```
 
 ```{r}
-#NeuralNetTools::garson(nn)
+NeuralNetTools::garson(nn)
 ```
 
 ```{r}
@@ -147,13 +165,14 @@ predict_all_net <- predict_all$net.result*(maxy-miny)+miny
 ```{r}
 #rm(df1, df2)
 df1 <- as.data.table(data.frame(actual_value = y_raw, 
-                               predicted_value = predict_all_net,
-                               input = "alle_Daten"))
+                                predicted_value = predict_all_net,
+                                input = "alle_Daten")) %>% bind_cols(idx_saetze)
 df2 <- as.data.table(data.frame(actual_value =test.r, 
-                               predicted_value = Predict_,
-                               input = "test_Daten"))
+                                predicted_value = Predict_,
+                                input = "test_Daten"))%>% bind_cols(idx_saetze[-idx,])
 
-ggplot(bind_rows(df1, df2), aes(actual_value, predicted_value)) + 
+ggplot(bind_rows(df1, df2), aes(actual_value, predicted_value,
+                                color=as.factor(satz_id))) + 
     geom_point() + 
     geom_abline(slope = 1, intercept = 0, color = "red")+
     ylab("ANN predicted AWC (%)") + xlab("actual AWC (%)") + 
@@ -162,6 +181,7 @@ ggplot(bind_rows(df1, df2), aes(actual_value, predicted_value)) +
     coord_fixed() + 
     theme(panel.grid = element_blank())
 ```
+
 
 
 

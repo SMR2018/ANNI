@@ -748,10 +748,9 @@ tensio <- tensio %>%
 # data.table::fwrite(x = tensio,file = file1, sep = ";", dec = ".")
 ```
 
-#Bewässerung_mean-Tabelle speichern
+#Bewässerung-Tabelle speichern
 ```{r}
 # file1 <- "../data/derived_data/bewaesserung_2020_2021_20220311.csv"
 # data.table::fwrite(x = bewaesserung,file = file1, sep = ";", dec = ".")
 ```
-
 

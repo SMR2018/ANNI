@@ -12,38 +12,85 @@ library(ggplot2)
 library(lubridate)
 library(ggnewscale)
 library(tidyr)
+library(DBI)
 ```
+
+#Wetter-Daten aus DB auslesen:
+```{r}
+# Verbindung zur Datenbanl herstellen:
+path1 <- ifelse(Sys.info()["nodename"] == "Samanthas-MacBook-Pro.local",
+                "../../Github_GeoSenSys/GeoSenSys2020/", "../../GeoSenSys2020/"
+)  
+db <- paste0(path1, "Data_2020/HGU_GeoSenSys_V3_6.db") # DB in other R-Project
+
+db1 <- dbConnect(RSQLite::SQLite(), db)
+query2 <- "SELECT *  FROM Wetter;"
+wetter <- dbGetQuery(db1, query2) %>% # Niederschlag aller Saetze einlesen
+    mutate_at("datum_wetter", ~data.table::as.IDate(.))
+dbDisconnect(db1)
+rm(query2,db,db1, path1)
+```
+```{r}
+wetter <- wetter %>% group_by(satz_id) %>%
+    mutate(Tempsum = cumsum(Tmean_gradC), .before = Tmax_gradC) %>%
+    mutate(Gobsum = cumsum(globalstrahlung_Mj_m2), .before = globalstrahlung_Mj_m2) %>% 
+    ungroup %>% 
+    select(-wetter_id) 
+```
+
 
 #Daten-Tabelle erstellen
 ```{r}
-aussaat <- as_date("2021-04-06")
-file1 <- "../data/derived_data/nfK_2021_Satz1.csv" #Tensiometer
-file2 <- "../data/raw_data/2021_008_Spinat_F6_S1_Klimadaten.csv" #Wetter
-file3 <- "../data/derived_data/bewaesserung_mean_2021_S1.csv" #Bewässerung
+# aussaat <- as_date("2021-04-06")
+# file1 <- "../data/derived_data/nfK_2021_Satz1.csv" #Tensiometer
+# file2 <- "../data/raw_data/2021_008_Spinat_F6_S1_Klimadaten.csv" #Wetter
+# file3 <- "../data/derived_data/bewaesserung_mean_2021_S1.csv" #Bewässerung
+# 
+# tensio <- read.csv(file1, sep = ";", dec = ".", row.names = NULL)  %>%
+#     filter(wasser_level == "Wfull") %>%
+#     mutate_at("zeit_messung", ~as_date(.,format="%Y-%m-%d")) %>%
+#     select(zeit_messung, T0020_nFK, T2040_nFK, T4060_nFK)
+# 
+# zeit <- range(tensio$zeit_messung, na.rm = TRUE)
+# 
+# wetter <- read.csv(file2, sep = ";", dec = ",", row.names = NULL) %>%
+#     mutate_at("Datum", ~as_date(.,format="%Y-%m-%d")) %>%
+#     filter(Datum %in%  zeit[1]:zeit[2]) %>%
+#     select("Datum", "Tmax", "Tmin", "Tmean", "RF", "Glob", "P", "RHmin", "V2", "FAO56") %>%
+#     mutate(Tage_seit_Aussaat = 1) %>%
+#     mutate_at("Tage_seit_Aussaat", ~cumsum(.) + as.numeric(zeit[1] - aussaat))
+# 
+# bewaesserung <- read.csv(file3, sep = ";", dec = ".", row.names = NULL) %>%
+#     mutate_at("Datum", ~as_date(.,format="%Y-%m-%d")) %>%
+#     filter(wasser_level == "Wfull") %>% select(-wasser_level)
+# 
+# #wetter und bewässerung zusammenführen:
+# input_tabelle <- wetter %>% left_join(bewaesserung, by="Datum") %>%
+#     left_join(tensio, by=c("Datum" = "zeit_messung")) %>%
+#     mutate_at("bewaesserung_mm", ~ifelse(is.na(.), 0, .))
+```
 
-tensio <- read.csv(file1, sep = ";", dec = ".", row.names = NULL)  %>%
-    filter(wasser_level == "Wfull") %>%
-    mutate_at("zeit_messung", ~as_date(.,format="%Y-%m-%d")) %>%
-    select(zeit_messung, T0020_nFK, T2040_nFK, T4060_nFK)
 
-zeit <- range(tensio$zeit_messung, na.rm = TRUE)
-
-wetter <- read.csv(file2, sep = ";", dec = ",", row.names = NULL) %>%
-    mutate_at("Datum", ~as_date(.,format="%Y-%m-%d")) %>%
-    filter(Datum %in%  zeit[1]:zeit[2]) %>%
-    select("Datum", "Tmax", "Tmin", "Tmean", "RF", "Glob", "P", "RHmin", "V2", "FAO56") %>%
-    mutate(Tage_seit_Aussaat = 1) %>%
-    mutate_at("Tage_seit_Aussaat", ~cumsum(.) + as.numeric(zeit[1] - aussaat))
-
-bewaesserung <- read.csv(file3, sep = ";", dec = ".", row.names = NULL) %>%
-    mutate_at("Datum", ~as_date(.,format="%Y-%m-%d")) %>%
-    filter(wasser_level == "Wfull") %>% select(-wasser_level)
-
-#wetter und bewässerung zusammenführen:
-input_tabelle <- wetter %>% left_join(bewaesserung, by="Datum") %>%
-    left_join(tensio, by=c("Datum" = "zeit_messung")) %>%
+```{r}
+tensio <- fread("../data/derived_data/nfK_2020_2021_20220311.csv") %>%
+    as_tibble() %>%
+    #mutate_at("zeit_messung", ~as_date(.,format="%Y-%m-%d")) %>%
+    select(satz_id, variante_H2O,wiederholung, zeit_messung, tage_seit_aussaat, 
+           T0020_nFK,T2040_nFK,T4060_nFK) 
+```
+```{r}
+bewaesserung <- fread("../data/derived_data/bewaesserung_2020_2021_20220311.csv") %>%
+    as_tibble()
+```
+#Alle Tabellen joinen:
+```{r}
+input_tabelle <- tensio %>% 
+    left_join(bewaesserung, by = c("satz_id", "variante_H2O", "wiederholung",
+                                   "zeit_messung" = "datum_bewaesserung")) %>%
+    left_join(wetter, by = c("satz_id","zeit_messung" = "datum_wetter")) %>%
     mutate_at("bewaesserung_mm", ~ifelse(is.na(.), 0, .))
 ```
+
 
 ### Wasserhaltevermögen der Felder der HGU:
 |Schicht Nr.|Bezeichnung|100%nFK entsprechen|"Wassergehalt (Vol.% bei 100%nFK)"|
@@ -63,23 +110,34 @@ T2040_mm_bei100nFK <- T0020_mm_bei100nFK - (T0020_mm_bei100nFK-T4060_mm_bei100nF
 ### Wassergehalt in mm in der gesamten Bodenschicht 0-60cm anfügen
 ```{r}
 input_tabelle <- input_tabelle %>%
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    #Fehlende Werte Approximieren:
+    mutate_at(c("T0020_nFK","T2040_nFK", "T4060_nFK"),
+              ~zoo::na.approx(., na.rm = FALSE))%>%
+    mutate(xxx=1:n()) %>%
     mutate(T0020_mm = 0.01 * T0020_nFK * T0020_mm_bei100nFK,
            T2040_mm = 0.01 * T2040_nFK * T4060_mm_bei100nFK,
            T4060_mm = 0.01 * T4060_nFK * T2040_mm_bei100nFK) %>%
     mutate(freier_Speicher_T0020_mm = T0020_mm_bei100nFK - T0020_mm,
            freier_Speicher_T2040_mm = T4060_mm_bei100nFK - T2040_mm,
            freier_Speicher_T4060_mm = T2040_mm_bei100nFK - T4060_mm) %>% 
+    
     rowwise() %>%
-    mutate(T0060_mm = sum(T0020_mm, T2040_mm, T4060_mm, na.rm = TRUE)) %>%
+    mutate(T0060_mm = sum(T0020_mm, T2040_mm, T4060_mm, na.rm = FALSE)) %>%
+    #Wenn ein Tensiometer-Wert einer Schicht fehlt, dann wird T0060_mm auf NA gesetzt.
     ungroup()
 
-input_tabelle
+
+input_tabelle 
 ```
+
 
 \
 ### Tabelle speichern on Projekt-Ordner für Daten
 ```{r}
-#write.table(x = input_tabelle, file = "../data/derived_data/input_tabelle_2021_Satz1_b.csv", sep = ";",dec = ".", row.names = FALSE)
+# write.table(x = input_tabelle,
+#             file = "../data/derived_data/input_tabelle_2020_2021_20220315.csv",
+#             sep = ";",dec = ".", row.names = FALSE)
 ```
 
 
