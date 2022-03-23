@@ -1,0 +1,81 @@
+{
+  "type": "FeatureCollection",
+  "name": "Beispiel API-Response",
+  "metadata": {
+    "fieldId": "Bsp01",
+    "date": "2020-08-23T18:25:43.511Z",
+    "mean": 42.78
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "irmi": 5.0,
+        "ibi": 14.52
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.9263999,
+          51.5196094
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "irmi": 7.34,
+        "ibi": 20.57
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.9263748,
+          51.519476
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "irmi": 3.03,
+        "ibi": 30.34
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.9263419,
+          51.5193446
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "irmi": 13.37,
+        "ibi": 42.42
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.926309,
+          51.5191997
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "irmi": 76.0,
+        "ibi": 12.23
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          9.9262781,
+          51.5190702
+        ]
+      }
+    }
+  ]
+}
