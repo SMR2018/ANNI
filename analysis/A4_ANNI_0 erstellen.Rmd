@@ -23,7 +23,7 @@ library(neuralnet)
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 ```{r}
 input_tabelle <- data.table::fread(
-    "../data/derived_data/input_tabelle_2020_2021_20220314.csv", 
+    "../data/derived_data/input_tabelle_2020_2021_20220315.csv", 
     sep = ";", dec = ".") %>% as_tibble()
 ```
 \
@@ -87,22 +87,28 @@ test <- input_df.scaled[-idx,]
 ```{r}
 # Custom activation function
 #softplus <- function(x) log(1 + exp(x))
-
-nn=neuralnet(T0060_mm ~ tage_seit_aussaat+ 
-                 Tempsum+Tmax_gradC+Tmin_gradC+Tmean_gradC+
+nn=neuralnet(T0060_mm ~ 
+                 #tage_seit_aussaat+ 
+                 #Tempsum+
+                 #Tmax_gradC+
+                 #Tmin_gradC+
+                 Tmean_gradC+
                  wasser_input_Vortag+
-                 T0020_nFK_Vortag+T2040_nFK_Vortag+T4060_nFK_Vortag+
-                 relLuftfeuchte_mean_prozent+relLuftfeuchte_min_prozent+
-                 Gobsum+globalstrahlung_Mj_m2+
-                 windgeschwindigkeit_m_s,
-             #Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+Tmean+RF+Glob+RHmin+V2+wasser_input_Vortag,
+                 T0020_nFK_Vortag+
+                 T2040_nFK_Vortag+
+                 T4060_nFK_Vortag+
+                 relLuftfeuchte_mean_prozent+
+                 relLuftfeuchte_min_prozent+
+                 Gobsum,#+
+                 #globalstrahlung_Mj_m2,#+
+                # windgeschwindigkeit_m_s,
              
              data=train,
-             hidden=10,
+             hidden=8,#10
              act.fct = "logistic", #softplus
              linear.output = FALSE,
              algorithm = "backprop", #backpropagation
-             learningrate = 0.0001, 
+             learningrate = 0.001, #0.0001
              #threshold=0.01,
              #rep=5,
              stepmax = 1e+06) #1000000
@@ -131,8 +137,13 @@ Predict <- compute(nn,test)
 ```
 
 ```{r}
-NeuralNetTools::garson(nn)
+p1 <- NeuralNetTools::garson(nn) 
+p2 <- NeuralNetTools::olden(nn)
+p1 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p2 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 ```
+NeuralNetTools::olden(nn) zeigt auch Vorzeichen: Tmin, Tage_seit_Aussaat und windgeschwindigkeit sind kontraproduktiv für das Neuronale Netzwerk. Sie wurden daher in einem weiteren Schritt entfernt.
+https://www.jstatsoft.org/article/view/v085i11
 
 ```{r}
 # Nur bei einem hidden layer möglich.
