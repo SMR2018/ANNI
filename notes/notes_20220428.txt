@@ -1,0 +1,15 @@
+- nFK von Bodenvariablen abhängig: bis jetzt nur für sandigen Lehm, daher nicht in Input-Tabelle. —> erweitern für zukünftige/Praxis
+
+--> Teilflächenspezifisch, wenn wir Geoohilus Überführung die Bodeninfos haben. Grid.
+
+- auch für mehrere Output-Variablen (Schichtenweise Bodenfeuchte)
+
+- Als ts Tensorflow-Modell. 
+
+Nachstellt: Bewässerungsbedarf bis 90% nFK (Puffer Regen). Abhängig von Vodeninformationen.
+--> in PYthon. 
+
+
+Unterschied: ANNi vs GS: täglich unterschiedlich, aber Summe stimmt überein.
+
+Start-Wert BodenfeuchteViewer
