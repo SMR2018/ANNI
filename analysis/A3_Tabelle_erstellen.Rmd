@@ -17,20 +17,24 @@ library(DBI)
 
 #Wetter-Daten aus DB auslesen:
 ```{r}
-# Verbindung zur Datenbanl herstellen:
-path1 <- ifelse(Sys.info()["nodename"] == "Samanthas-MacBook-Pro.local",
-                "../../Github_GeoSenSys/GeoSenSys2020/", "../../GeoSenSys2020/"
-)  
-db <- paste0(path1, "Data_2020/HGU_GeoSenSys_V3_6.db") # DB in other R-Project
-
-db1 <- dbConnect(RSQLite::SQLite(), db)
-query2 <- "SELECT *  FROM Wetter;"
-wetter <- dbGetQuery(db1, query2) %>% # Niederschlag aller Saetze einlesen
-    mutate_at("datum_wetter", ~data.table::as.IDate(.))
-dbDisconnect(db1)
-rm(query2,db,db1, path1)
+# # Verbindung zur Datenbanl herstellen:
+# path1 <- ifelse(Sys.info()["nodename"] == "Samanthas-MacBook-Pro.local",
+#                 "../../Github_GeoSenSys/GeoSenSys2020/", "../../GeoSenSys2020/"
+# )  
+# db <- paste0(path1, "Data_2020/HGU_GeoSenSys_V3_6.db") # DB in other R-Project
+# 
+# db1 <- dbConnect(RSQLite::SQLite(), db)
+# query2 <- "SELECT *  FROM Wetter;"
+# wetter <- dbGetQuery(db1, query2) %>% # Niederschlag aller Saetze einlesen
+#     mutate_at("datum_wetter", ~data.table::as.IDate(.))
+# dbDisconnect(db1)
+# rm(query2,db,db1, path1)
+# 
+# # als csv speichern:
+# fwrite(x = wetter, file = "../data/derived_data/wetter_2020_2021_20220502.csv", sep = ";")
 ```
 ```{r}
+wetter <- fread(input = "../data/derived_data/wetter_2020_2021_20220502.csv")
 wetter <- wetter %>% group_by(satz_id) %>%
     mutate(Tempsum = cumsum(Tmean_gradC), .before = Tmax_gradC) %>%
     mutate(Gobsum = cumsum(globalstrahlung_Mj_m2), .before = globalstrahlung_Mj_m2) %>% 
@@ -115,9 +119,22 @@ input_tabelle <- input_tabelle %>%
     mutate_at(c("T0020_nFK","T2040_nFK", "T4060_nFK"),
               ~zoo::na.approx(., na.rm = FALSE))%>%
     mutate(xxx=1:n()) %>%
+    
+    #Auswaschung berechnen:
+    mutate(T0020_Auswaschung_prozent_nFK = ifelse(T0020_nFK > 100, T0020_nFK - 100, 0),
+           T2040_Auswaschung_prozent_nFK = ifelse(T2040_nFK > 100, T2040_nFK - 100, 0),
+           T4060_Auswaschung_prozent_nFK = ifelse(T4060_nFK > 100, T4060_nFK - 100, 0)) %>%
+    
+    mutate(T0020_Auswaschung_mm = T0020_Auswaschung_prozent_nFK * 0.01 * T0020_mm_bei100nFK,
+           T2040_Auswaschung_mm = T2040_Auswaschung_prozent_nFK * 0.01 * T4060_mm_bei100nFK,
+           T4060_Auswaschung_mm = T4060_Auswaschung_prozent_nFK * 0.01 * T2040_mm_bei100nFK) %>%
+    
+    #nFK in mm umrechnen:
     mutate(T0020_mm = 0.01 * T0020_nFK * T0020_mm_bei100nFK,
            T2040_mm = 0.01 * T2040_nFK * T4060_mm_bei100nFK,
            T4060_mm = 0.01 * T4060_nFK * T2040_mm_bei100nFK) %>%
+    
+    #"freien Speicher" berechnen: Wieviel mm Wasser kann die Schicht noch aufnehmen?
     mutate(freier_Speicher_T0020_mm = T0020_mm_bei100nFK - T0020_mm,
            freier_Speicher_T2040_mm = T4060_mm_bei100nFK - T2040_mm,
            freier_Speicher_T4060_mm = T2040_mm_bei100nFK - T4060_mm) %>% 
@@ -136,7 +153,7 @@ input_tabelle
 ### Tabelle speichern on Projekt-Ordner für Daten
 ```{r}
 # write.table(x = input_tabelle,
-#             file = "../data/derived_data/input_tabelle_2020_2021_20220315.csv",
+#             file = "../data/derived_data/input_tabelle_2020_2021_20220502.csv",
 #             sep = ";",dec = ".", row.names = FALSE)
 ```
 
