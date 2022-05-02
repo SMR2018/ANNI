@@ -17,7 +17,7 @@ library(lubridate)
 #library(ggnewscale)
 #library(tidyr)
 library(neuralnet)
-#library(keras)
+library(keras)
 ```
 \
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
@@ -85,13 +85,14 @@ test <- input_df.scaled[-idx,]
 \
 ### ANNI erstellen
 ```{r}
+set.seed(1234)
 # Custom activation function
 #softplus <- function(x) log(1 + exp(x))
 nn=neuralnet(T0060_mm ~ 
-                 #tage_seit_aussaat+ 
-                 #Tempsum+
-                 #Tmax_gradC+
-                 #Tmin_gradC+
+                 tage_seit_aussaat+ 
+                 Tempsum+
+                 Tmax_gradC+
+                 Tmin_gradC+
                  Tmean_gradC+
                  wasser_input_Vortag+
                  T0020_nFK_Vortag+
@@ -99,16 +100,16 @@ nn=neuralnet(T0060_mm ~
                  T4060_nFK_Vortag+
                  relLuftfeuchte_mean_prozent+
                  relLuftfeuchte_min_prozent+
-                 Gobsum,#+
-                 #globalstrahlung_Mj_m2,#+
-                # windgeschwindigkeit_m_s,
+                 Gobsum +
+                 globalstrahlung_Mj_m2 +
+                 windgeschwindigkeit_m_s,
              
              data=train,
-             hidden=8,#10
+             hidden=10,
              act.fct = "logistic", #softplus
              linear.output = FALSE,
              algorithm = "backprop", #backpropagation
-             learningrate = 0.001, #0.0001
+             learningrate = 0.001, #0.001
              #threshold=0.01,
              #rep=5,
              stepmax = 1e+06) #1000000
@@ -123,6 +124,11 @@ plot(nn,col.hidden = 'darkgreen',
      information = F,
      fill = 'lightblue')
 ```
+
+
+
+
+
 \
 ### Modell mit Test-Daten evaluieren
 ```{r}
@@ -142,7 +148,7 @@ p2 <- NeuralNetTools::olden(nn)
 p1 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 p2 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 ```
-NeuralNetTools::olden(nn) zeigt auch Vorzeichen: Tmin, Tage_seit_Aussaat und windgeschwindigkeit sind kontraproduktiv für das Neuronale Netzwerk. Sie wurden daher in einem weiteren Schritt entfernt.
+NeuralNetTools::olden(nn) zeigt auch Vorzeichen: Einige Parameter sind kontraproduktiv für das Neuronale Netzwerk. Sie wurden daher in einem weiteren Schritt entfernt.
 https://www.jstatsoft.org/article/view/v085i11
 
 ```{r}
@@ -181,18 +187,33 @@ df1 <- as.data.table(data.frame(actual_value = y_raw,
 df2 <- as.data.table(data.frame(actual_value =test.r, 
                                 predicted_value = Predict_,
                                 input = "test_Daten"))%>% bind_cols(idx_saetze[-idx,])
+df_all <- bind_rows(df1, df2)
+```
 
-ggplot(bind_rows(df1, df2), aes(actual_value, predicted_value,
-                                color=as.factor(satz_id))) + 
+```{r}
+p1 <- ggplot(df_all, aes(actual_value, predicted_value,
+                         color=as.factor(satz_id))) + 
     geom_point() + 
     geom_abline(slope = 1, intercept = 0, color = "red")+
     ylab("ANN predicted AWC (%)") + xlab("actual AWC (%)") + 
-    facet_grid(.~input) + 
+    # facet_grid(.~input) + 
     theme_bw() + 
     coord_fixed() + 
-    theme(panel.grid = element_blank())
+    theme(panel.grid = element_blank(),
+          legend.position = "bottom") +
+    scale_color_discrete("Spinat_satz")
+p1
+
+#Modellguete R2:
+summary(lm(predicted_value ~actual_value, data = df_all))$adj.r.squared
+#Modellguete MSE:
+MSE.nn
 ```
 
+```{r}
+ggsave(plot = p1, "../graphics/ANNI_actual_predicted.png", device = "png", 
+       width = 4, height = 4, dpi = 300)
+```
 
 
 
@@ -202,9 +223,24 @@ ggplot(bind_rows(df1, df2), aes(actual_value, predicted_value,
 
 <!-- #V2 -->
 <!-- ```{r} -->
-<!-- n <- neuralnet(T0060_mm~Tage_seit_Aussaat+T0020_nFK_Vortag+T2040_nFK_Vortag+ T4060_nFK_Vortag+                 Tmax+Tmin+Tmean+RF+Glob+RHmin+V2+wasser_input, -->
-<!--                data=input_df[idx,], -->
-<!--                hidden = c(12,7), -->
+<!-- n <- neuralnet(T0060_mm ~  -->
+<!--                    tage_seit_aussaat+  -->
+<!--                    Tempsum+ -->
+<!--                    Tmax_gradC+ -->
+<!--                    Tmin_gradC+ -->
+<!--                    Tmean_gradC+ -->
+<!--                    wasser_input_Vortag+ -->
+<!--                    T0020_nFK_Vortag+ -->
+<!--                    T2040_nFK_Vortag+ -->
+<!--                    T4060_nFK_Vortag+ -->
+<!--                    relLuftfeuchte_mean_prozent+ -->
+<!--                    relLuftfeuchte_min_prozent+ -->
+<!--                    Gobsum + -->
+<!--                    globalstrahlung_Mj_m2 + -->
+<!--                    windgeschwindigkeit_m_s, -->
+
+<!--                data=train, -->
+<!--                hidden = c(10), -->
 <!--                linear.output = F, -->
 <!--                lifesign = 'full', -->
 <!--                rep=1) -->
@@ -214,106 +250,158 @@ ggplot(bind_rows(df1, df2), aes(actual_value, predicted_value,
 <!-- ``` -->
 
 
-<!-- #V3 -->
-
-<!-- ```{r} -->
-<!-- data <- as.matrix(input_df) -->
-<!-- dimnames(data) <- NULL -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- set.seed(123) -->
-<!-- ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3)) -->
-<!-- training <- data[ind==1,2:13] -->
-<!-- test <- data[ind==2, 2:13] -->
-<!-- trainingtarget <- data[ind==1, 1] -->
-<!-- testtarget <- data[ind==2,1] -->
-<!-- str(trainingtarget) -->
-<!-- str(testtarget) -->
-<!-- ``` -->
-<!-- ```{r} -->
-<!-- m <- colMeans(training) -->
-<!-- s <- apply(training, 2, sd) -->
-<!-- training <- scale(training, center = m, scale = s) -->
-<!-- test <- scale(test, center = m, scale = s) -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- model <- keras::keras_model_sequential() -->
-<!-- model %>% -->
-<!--     layer_dense(units = 5, activation = 'relu', input_shape = c(12)) %>% -->
-<!--     layer_dense(units = 1) -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- model %>% compile(loss = 'mse', -->
-<!--                   optimizer = 'rmsprop',  -->
-<!--                   metrics = 'mae')  -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- mymodel <- model %>%           -->
-<!--     fit(training,trainingtarget, -->
-<!--         epochs = 100, -->
-<!--         batch_size = 32, -->
-<!--         validation_split = 0.2) -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- model %>% evaluate(test, testtarget) -->
-<!-- pred <- model %>% predict(test) -->
-<!-- mean((testtarget-pred)^2)  -->
-<!-- ``` -->
-<!-- ```{r} -->
-<!-- plot(testtarget, pred)  -->
-<!-- ``` -->
+#V3
 
 
 
+```{r}
+target_x <- c("tage_seit_aussaat",
+              "Tempsum",
+              "Tmax_gradC" ,
+              "Tmin_gradC",
+              "Tmean_gradC",
+              "relLuftfeuchte_mean_prozent",
+              "relLuftfeuchte_min_prozent",
+              "Gobsum",
+              "globalstrahlung_Mj_m2",
+              "windgeschwindigkeit_m_s",
+              "T0020_nFK_Vortag",
+              "T2040_nFK_Vortag",
+              "T4060_nFK_Vortag",           
+              "wasser_input_Vortag"  )
+
+target_y <- "T0060_mm" 
+
+idx1 <- match(target_x,names(input_df))
+idx2 <- match(target_y,names(input_df))
+
+```
+
+
+```{r}
+data <- as.matrix(input_df[,c(idx2, idx1)])
+dimnames(data) <- NULL
+```
+
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
+training <- data[ind==1,2:ncol(data)]
+test <- data[ind==2, 2:ncol(data)]
+trainingtarget <- data[ind==1, 1]
+testtarget <- data[ind==2,1]
+str(trainingtarget)
+str(testtarget)
+```
+```{r}
+m <- colMeans(training)
+s <- apply(training, 2, sd)
+training <- scale(training, center = m, scale = s)
+test <- scale(test, center = m, scale = s)
+```
+
+```{r}
+model <- keras::keras_model_sequential()
+model %>%
+    layer_dense(units = 5, activation = 'sigmoid', input_shape = c(10,4)) %>%
+    layer_dense(units = 1)
+```
+
+```{r}
+model %>% compile(loss = 'mse',
+                  optimizer = 'rmsprop',
+                  metrics = 'mae')
+```
+
+```{r}
+mymodel <- model %>%
+    fit(training,trainingtarget,
+        epochs = 100,
+        batch_size = 32,
+        validation_split = 0.2)
+```
+
+```{r}
+model %>% evaluate(test, testtarget)
+pred <- model %>% predict(test)
+mean((testtarget-pred)^2)
+```
+```{r}
+plot(testtarget, pred)
+```
+Modell speichern:
+For Sequential Models and models built using the Functional API use:
+
+save_model_hdf5()/load_model_hdf5() 
+    to save the entire model to disk, including the optimizer state. 
+    You can also use save_model_tf/load_model_tf to save the entire model to the SavedModel format.
+
+get_config()/from_config() 
+    to load only the model architecture into an R object.
+
+model_to_json()/model_from_json() 
+    to save only the architecture of the model to a single string.
+    useful for saving the architecture to disk. 
+    You can also use model_to_yaml()/model_from_yaml() to save the architecture.
+
+save_model_weights_hdf5()/load_model_weights_hdf5() 
+    if you want to save only the model weights to disk in the hdf5 format. 
+    You can also use save_model_weights_tf()/load_model_weights_tf() to save the weights in the SavedModel format.
+
+```{r}
+# Save entire model to the SavedModel format
+model %>% save_model_tf("Model1/")
+
+save_model_hdf5(model, "model.h5")
+```
+
+Saved Model
+A SavedModel contains a complete TensorFlow program, including weights and computation. It does not require the original model building code to run, which makes it useful for sharing or deploying (with TFLite, TensorFlow.js, TensorFlow Serving, or TensorFlow Hub).
+
+
+#V4
+
+```{r}
+model <- keras::keras_model_sequential()
+
+model %>%
+    layer_dense(units = 20, activation = 'relu', input_shape = c(12)) %>%
+    layer_dropout(rate=0.4)  %>%
+    layer_dense(units = 50, activation = 'relu')  %>%
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 20, activation = 'relu')  %>%
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 1)
+```
+
+```{r}
+model %>% compile(loss = 'mse',
+                  optimizer = 'rmsprop',
+                  metrics = 'mae')
+```
+
+```{r message=FALSE, include=FALSE}
+mymodel <- model %>%
+    fit(training,trainingtarget,
+        epochs = 100,
+        batch_size = 32,
+        validation_split = 0.2)
+```
+
+```{r}
+model %>% evaluate(test, testtarget)
+pred <- model %>% predict(test)
+mean((testtarget-pred)^2)
+```
+```{r}
+plot(testtarget, pred)
+```
 
 
 
+#V4
+```{r}
 
-<!-- ```{r} -->
-<!-- model <- keras::keras_model_sequential() -->
-
-<!-- model %>% -->
-<!--     layer_dense(units = 20, activation = 'relu', input_shape = c(12)) %>% -->
-<!--     layer_dropout(rate=0.4)  %>% -->
-<!--     layer_dense(units = 50, activation = 'relu')  %>% -->
-<!--     layer_dropout(rate=0.2)  %>% -->
-<!--     layer_dense(units = 20, activation = 'relu')  %>% -->
-<!--     layer_dropout(rate=0.2)  %>% -->
-<!--     layer_dense(units = 1) -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- model %>% compile(loss = 'mse', -->
-<!--                   optimizer = 'rmsprop',  -->
-<!--                   metrics = 'mae')  -->
-<!-- ``` -->
-
-<!-- ```{r message=FALSE, include=FALSE} -->
-<!-- mymodel <- model %>%           -->
-<!--     fit(training,trainingtarget, -->
-<!--         epochs = 100, -->
-<!--         batch_size = 32, -->
-<!--         validation_split = 0.2) -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- model %>% evaluate(test, testtarget) -->
-<!-- pred <- model %>% predict(test) -->
-<!-- mean((testtarget-pred)^2)  -->
-<!-- ``` -->
-<!-- ```{r} -->
-<!-- plot(testtarget, pred)  -->
-<!-- ``` -->
-
-
-
-<!-- #V4 -->
-<!-- ```{r} -->
-
-<!-- ``` -->
+```
 
