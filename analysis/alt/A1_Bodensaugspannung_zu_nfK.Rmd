@@ -286,7 +286,7 @@ p4 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b")
 p5 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6")
 
 plot_list <- list(p2, p3, p4, p5)
-p2; p3; p4; p5
+p2; p3; p4; p5 
 ```
 
 #Grafik speichern
@@ -303,7 +303,7 @@ p2; p3; p4; p5
 # )
 ```
 
-\
+\ #"../graphics/X20cm_Schritte/"
 \
 ![test](../graphics/nFK_2020_Satz2.png)
 \
