@@ -126,24 +126,25 @@ input_tabelle <- input_tabelle %>%
            T4060_Auswaschung_prozent_nFK = ifelse(T4060_nFK > 100, T4060_nFK - 100, 0)) %>%
     
     mutate(T0020_Auswaschung_mm = T0020_Auswaschung_prozent_nFK * 0.01 * T0020_mm_bei100nFK,
-           T2040_Auswaschung_mm = T2040_Auswaschung_prozent_nFK * 0.01 * T4060_mm_bei100nFK,
-           T4060_Auswaschung_mm = T4060_Auswaschung_prozent_nFK * 0.01 * T2040_mm_bei100nFK) %>%
+           T2040_Auswaschung_mm = T2040_Auswaschung_prozent_nFK * 0.01 * T2040_mm_bei100nFK,
+           T4060_Auswaschung_mm = T4060_Auswaschung_prozent_nFK * 0.01 * T4060_mm_bei100nFK) %>%
     
     #nFK in mm umrechnen:
     mutate(T0020_mm = 0.01 * T0020_nFK * T0020_mm_bei100nFK,
-           T2040_mm = 0.01 * T2040_nFK * T4060_mm_bei100nFK,
-           T4060_mm = 0.01 * T4060_nFK * T2040_mm_bei100nFK) %>%
+           T2040_mm = 0.01 * T2040_nFK * T2040_mm_bei100nFK,
+           T4060_mm = 0.01 * T4060_nFK * T4060_mm_bei100nFK) %>%
     
     #"freien Speicher" berechnen: Wieviel mm Wasser kann die Schicht noch aufnehmen?
     mutate(freier_Speicher_T0020_mm = T0020_mm_bei100nFK - T0020_mm,
-           freier_Speicher_T2040_mm = T4060_mm_bei100nFK - T2040_mm,
-           freier_Speicher_T4060_mm = T2040_mm_bei100nFK - T4060_mm) %>% 
+           freier_Speicher_T2040_mm = T2040_mm_bei100nFK - T2040_mm,
+           freier_Speicher_T4060_mm = T4060_mm_bei100nFK - T4060_mm) %>% 
     
     rowwise() %>%
     mutate(T0060_mm = sum(T0020_mm, T2040_mm, T4060_mm, na.rm = FALSE)) %>%
     #Wenn ein Tensiometer-Wert einer Schicht fehlt, dann wird T0060_mm auf NA gesetzt.
     ungroup()
 
+#filter_at(c("T0020_nFK","T2040_nFK","T4060_nFK"), any_vars(.<52))
 
 input_tabelle 
 ```
@@ -153,7 +154,7 @@ input_tabelle
 ### Tabelle speichern on Projekt-Ordner für Daten
 ```{r}
 # write.table(x = input_tabelle,
-#             file = "../data/derived_data/input_tabelle_2020_2021_20220502.csv",
+#             file = "../data/derived_data/input_tabelle_2020_2021_20220504.csv",
 #             sep = ";",dec = ".", row.names = FALSE)
 ```
 
