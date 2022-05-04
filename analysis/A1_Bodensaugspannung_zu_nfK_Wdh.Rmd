@@ -160,19 +160,8 @@ tensio <- tensio %>% group_by(satz_id, variante_H2O, wiederholung) %>%
 ```
 
 #Korrektur der Wassersäule im Tensiometer:
-<!-- Anleitung des Herstellers: https://pronova.de/neusale/neu/1249/bambach-stecktensiometer-premium -->
-<!-- ```{r} -->
-<!-- tensio <- tensio %>% -->
-<!--     mutate( -->
-<!--         bodensaugspannung_0020_hPa = bodensaugspannung_0020_hPa -20, #-cm Wassersäule -->
-<!--         bodensaugspannung_2040_hPa = bodensaugspannung_2040_hPa -40, #-cm Wassersäule -->
-<!--         bodensaugspannung_4060_hPa = bodensaugspannung_4060_hPa -60  #-cm Wassersäule -->
-<!--     ) %>% -->
-<!--     mutate_at(c("bodensaugspannung_0020_hPa",  -->
-<!--                 "bodensaugspannung_2040_hPa",  -->
-<!--                 "bodensaugspannung_4060_hPa"), ~ifelse(.<0,1,.)) #nicht 0, da sonst -Inf bei log -->
-<!-- ``` -->
-
+Anleitung des Herstellers: https://pronova.de/neusale/neu/1249/bambach-stecktensiometer-premium 
+ist bereits in NM Excel-Datei passiert.
 
 ### hPa in pf umwandeln: log10(hPa)
 ```{r}
