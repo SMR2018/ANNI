@@ -2,10 +2,11 @@
 title: "ANNI_0 erstellen"
 author: "Samantha Rubo"
 date: '2021-12-15'
-output: html_notebook
+output:
+  pdf_document: default
 ---
 ```{r}
-rm(list = ls())
+#rm(list = ls())
 ```
 \
 ### Bibliotheken laden
@@ -13,17 +14,16 @@ rm(list = ls())
 library(data.table)
 library(dplyr)
 library(ggplot2)
+library(purrr)
 library(lubridate)
-#library(ggnewscale)
 #library(tidyr)
 library(neuralnet)
-library(keras)
 ```
 \
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 ```{r}
 input_tabelle <- data.table::fread(
-    "../data/derived_data/input_tabelle_2020_2021_20220315.csv", 
+    "../data/derived_data/input_tabelle_2020_2021_20220504.csv", 
     sep = ";", dec = ".") %>% as_tibble()
 ```
 \
@@ -31,9 +31,23 @@ input_tabelle <- data.table::fread(
 ```{r}
 input_tabelle <- 
     input_tabelle %>%
-    mutate(T0020_nFK_Vortag = c(NA,T0020_nFK[1:(n()-1)]),
-           T2040_nFK_Vortag = c(NA,T2040_nFK[1:(n()-1)]),
-           T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) #%>%
+    ## nFK vom Vortag: 
+    # mutate(T0020_nFK_Vortag = c(NA,T0020_nFK[1:(n()-1)]),
+    #        T2040_nFK_Vortag = c(NA,T2040_nFK[1:(n()-1)]),
+    #        T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) #%>%
+    ## mm vom Vortag:
+    mutate(T0020_mm_Vortag = c(NA,T0020_mm[1:(n()-1)]),
+           T2040_mm_Vortag = c(NA,T2040_mm[1:(n()-1)]),
+           T4060_mm_Vortag = c(NA,T4060_mm[1:(n()-1)])) %>%
+    mutate(T0020_Auswaschung_mm_Vortag = c(NA,T0020_Auswaschung_mm[1:(n()-1)]),
+           T2040_Auswaschung_mm_Vortag = c(NA,T2040_Auswaschung_mm[1:(n()-1)]),
+           T4060_Auswaschung_mm_Vortag = c(NA,T4060_Auswaschung_mm[1:(n()-1)])) %>% 
+    mutate_at(c("freier_Speicher_T0020_mm", "freier_Speicher_T2040_mm", 
+                "freier_Speicher_T4060_mm"), ~ifelse(.<0,0,.)) %>%
+    mutate(freier_Speicher_T0020_mm_Vortag = c(NA,freier_Speicher_T0020_mm[1:(n()-1)]),
+           freier_Speicher_T2040_mm_Vortag = c(NA,freier_Speicher_T2040_mm[1:(n()-1)]),
+           freier_Speicher_T4060_mm_Vortag = c(NA,freier_Speicher_T4060_mm[1:(n()-1)])) 
+
 # slice(-1) #erste Zeile entfernt, da hier NA
 ```
 \
@@ -44,11 +58,16 @@ target <- c("tage_seit_aussaat",
             "relLuftfeuchte_mean_prozent", "relLuftfeuchte_min_prozent", 
             "Gobsum", "globalstrahlung_Mj_m2", "niederschlag_mm", 
             "windgeschwindigkeit_m_s", "FAO56_mm", 
-            #"T0020_mm", "T2040_mm", "T4060_mm", 
-            "T0060_mm",
-            "T0020_nFK_Vortag", "T2040_nFK_Vortag", "T4060_nFK_Vortag")
+            "T0020_mm", "T2040_mm", "T4060_mm", 
+#            "T0020_Auswaschung_mm_Vortag", "T2040_Auswaschung_mm_Vortag", "T4060_Auswaschung_mm_Vortag",   
+#            "freier_Speicher_T0020_mm_Vortag", "freier_Speicher_T2040_mm_Vortag", "freier_Speicher_T4060_mm_Vortag",
+            #"T0060_mm",
+            #"T0020_nFK_Vortag", "T2040_nFK_Vortag", "T4060_nFK_Vortag",
+            "T0020_mm_Vortag", "T2040_mm_Vortag", "T4060_mm_Vortag"
+)
+
 input_df <- input_tabelle %>% #[1:100,] %>%
-    select(satz_id, variante_H2O, target) %>%
+    select(satz_id, variante_H2O,wiederholung, target) %>%
     rowwise() %>%
     mutate(wasser_input = sum(niederschlag_mm, bewaesserung_mm, na.rm = TRUE)) %>%
     ungroup %>%
@@ -64,19 +83,24 @@ input_df <- input_df %>% select(-satz_id, -variante_H2O)
 ### Datensatz skalieren --> notwendig als Input für ANN
 ```{r}
 # The predictor vars must be scaled data for the ANN fitting
-input_df.scaled <- data.table::as.data.table(scale(input_df))
-min.T0060_mm <- min(input_df$T0060_mm, na.rm = TRUE)
-max.T0060_mm <- max(input_df$T0060_mm, na.rm = TRUE)
-# response var must be scaled to [0 < resp < 1]
-input_df.scaled$T0060_mm <- scale(input_df$T0060_mm, 
-                                  center = min.T0060_mm, 
-                                  scale = max.T0060_mm - min.T0060_mm)
+df_tmp <-  input_df %>% select(-wiederholung)
+input_df.scaled <- data.table::as.data.table(scale(df_tmp))
+rm(df_tmp)
+# # response var must be scaled to [0 < resp < 1]
+input_df.scaled$T0020_mm <- input_df$T0020_mm
+input_df.scaled$T2040_mm <- input_df$T2040_mm
+input_df.scaled$T4060_mm <- input_df$T4060_mm
 
-# Train-test split
+input_df.scaled <- input_df.scaled %>%
+    mutate_at(c("T0020_mm", "T2040_mm", "T4060_mm"),
+              ~scale(., center = min(., na.rm = TRUE),
+                     scale = max(., na.rm = TRUE) - min(., na.rm = TRUE)))
+
 ```
 \
 ### Index für Trainings- und Test-Datensatz
 ```{r}
+# Train-test split
 set.seed(123)
 idx <- sample(1:nrow(input_df.scaled), size = tail(nrow(input_df.scaled)*0.7) )
 train <- input_df.scaled[idx,]
@@ -84,36 +108,124 @@ test <- input_df.scaled[-idx,]
 ```
 \
 ### ANNI erstellen
+## 1. Modell für 0-20cm Tiefe
 ```{r}
 set.seed(1234)
-# Custom activation function
-#softplus <- function(x) log(1 + exp(x))
-nn=neuralnet(T0060_mm ~ 
-                 tage_seit_aussaat+ 
-                 Tempsum+
-                 Tmax_gradC+
-                 Tmin_gradC+
-                 Tmean_gradC+
-                 wasser_input_Vortag+
-                 T0020_nFK_Vortag+
-                 T2040_nFK_Vortag+
-                 T4060_nFK_Vortag+
-                 relLuftfeuchte_mean_prozent+
-                 relLuftfeuchte_min_prozent+
-                 Gobsum +
-                 globalstrahlung_Mj_m2 +
-                 windgeschwindigkeit_m_s,
-             
-             data=train,
-             hidden=10,
-             act.fct = "logistic", #softplus
-             linear.output = FALSE,
-             algorithm = "backprop", #backpropagation
-             learningrate = 0.001, #0.001
-             #threshold=0.01,
-             #rep=5,
-             stepmax = 1e+06) #1000000
+nn0020=map(1:20, 
+           ~neuralnet(T0020_mm ~ 
+                          tage_seit_aussaat+ 
+                          #  Tempsum+
+                          Tmax_gradC+
+                          #  Tmin_gradC+
+                          ##  Tmean_gradC+
+                          wasser_input_Vortag+
+                          T0020_mm_Vortag+
+                          # T2040_mm_Vortag+
+                          # T4060_mm_Vortag+
+                          ##  relLuftfeuchte_mean_prozent+
+                          relLuftfeuchte_min_prozent+
+                          Gobsum +
+                          #  globalstrahlung_Mj_m2 +
+                          windgeschwindigkeit_m_s,
+                      
+                      data = train, hidden=10, act.fct = "logistic", rep = 1,
+                      linear.output = F, algorithm = "rprop+", #"rprop+",#"backprop"
+                      learningrate = 0.01, threshold=0.01, stepmax = 1e+6)
+)
 ```
+
+## gesamtes Modell für alle Schichten:
+```{r}
+# set.seed(1234)
+# nn=neuralnet(T0020_mm + T2040_mm ~ 
+#                  tage_seit_aussaat+ 
+#                  Tempsum+
+#                  Tmax_gradC+
+#                  Tmin_gradC+
+#                  Tmean_gradC+
+#                  wasser_input_Vortag+
+#                  T0020_mm_Vortag+
+#                  T2040_mm_Vortag+
+#                  T4060_mm_Vortag+
+#                  #  relLuftfeuchte_mean_prozent+
+#                  relLuftfeuchte_min_prozent+
+#                  Gobsum +
+#                  # globalstrahlung_Mj_m2 +
+#                  windgeschwindigkeit_m_s,
+#              
+#              data = train, hidden=10, act.fct = "logistic", rep = 1,
+#              linear.output = F, algorithm = "backprop", 
+#              learningrate = 0.01, threshold=0.01, stepmax = 1e+6)
+```
+
+## 2. Modell für 20-40cm Tiefe
+```{r}
+set.seed(1234)
+
+nn2040=map(1:20, 
+           ~neuralnet(T2040_mm ~ 
+                          tage_seit_aussaat+ 
+                          Tempsum+ ###
+                          ## Tmax_gradC+
+                          ## Tmin_gradC+ ##
+                          Tmean_gradC+ ##
+                          wasser_input_Vortag+ ###
+                          T0020_mm_Vortag+
+                          T2040_mm_Vortag,
+                      #  T4060_mm_Vortag+ #
+                      #  relLuftfeuchte_mean_prozent+ #
+                      #  relLuftfeuchte_min_prozent+ #
+                      #  Gobsum + #
+                      #  globalstrahlung_Mj_m2 + #
+                      #  windgeschwindigkeit_m_s, #
+                      
+                      data = train, hidden=10, act.fct = "logistic", rep = 1,
+                      linear.output = F, algorithm = "rprop+", #backprop
+                      learningrate = 0.01, threshold=0.01, stepmax = 1e+6)
+)
+```
+
+## 3. Modell für 40cm - 60 Tiefe
+```{r}
+set.seed(1234)
+
+nn4060=map(1:20, 
+           ~neuralnet(T4060_mm ~ 
+                          #        T4060_Auswaschung_mm_Vortag + ##Auswaschung eingefügt!!
+                          #        T2040_Auswaschung_mm_Vortag + ##Auswaschung eingefügt!!
+                          #        freier_Speicher_T2040_mm_Vortag + 
+                          tage_seit_aussaat+ 
+                          Tempsum+ 
+                          Tmax_gradC+
+                          #        Tmin_gradC+ 
+                          #        Tmean_gradC+ 
+                          #        wasser_input_Vortag+ 
+                          #        T0020_mm_Vortag+
+                          T2040_mm_Vortag+
+                          T4060_mm_Vortag+ 
+                          #       relLuftfeuchte_mean_prozent+ 
+                          #relLuftfeuchte_min_prozent+ 
+                          Gobsum,
+                      #       globalstrahlung_Mj_m2 + 
+                      #       windgeschwindigkeit_m_s, 
+                      
+                      data = train, hidden=c(10,5), act.fct = "logistic", rep = 1,
+                      linear.output = F, algorithm = "rprop+", #backprop
+                      learningrate = 0.01, threshold=0.01, stepmax = 1e+6)
+)
+```
+#Chose best repetition
+```{r}
+#nn_list <- nn0020 
+#nn_list <- nn2040
+nn_list <- nn4060
+errors1 <- map_dbl(nn_list, ~.x$result.matrix[1,])
+best_rep <-  which.min(errors1 )
+cat("Best Repetition ist: #", best_rep)
+nn <- nn_list[[best_rep]]
+
+```
+
 \
 ### Nodes plotten
 ```{r}
@@ -121,32 +233,43 @@ nn=neuralnet(T0060_mm ~
 plot(nn,col.hidden = 'darkgreen', 
      col.hidden.synapse = 'darkgreen',
      show.weights = F,
-     information = F,
+     information = T,
      fill = 'lightblue')
 ```
+```{r}
+olden_per_rep <- function(i, nn_list){
+    new_name <- paste0("importance_",i)
+    olden1 <- NeuralNetTools::olden(nn_list[[i]], bar_plot = FALSE) %>%
+        rename(!!sym(new_name) := importance)
+    olden1
+}
 
-
-
+importance_100 <- map(1:20, ~olden_per_rep(i = .x, nn_list = nn_list)) %>% bind_cols()
+```
+```{r}
+tt <- t(importance_100) %>% as_data_frame() 
+quantiles_olden <- map_df(tt, ~quantile(., probs = c(0.05,0.95)), .id="parameter") %>%
+    set_names("parameter","lower", "upper")
+quantiles_olden
+```
 
 
 \
-### Modell mit Test-Daten evaluieren
-```{r}
-Predict <- compute(nn,test)
-#Predict$net.result
-```
 
 ```{r}
-# prob <- Predict$net.result
-# pred <- ifelse(prob>0.5, 1, 0)
-# pred
-```
-
-```{r}
-p1 <- NeuralNetTools::garson(nn) 
+#p1 <- NeuralNetTools::garson(nn) 
 p2 <- NeuralNetTools::olden(nn)
-p1 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
-p2 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+## Beu Multi-Outpu-Data:
+#p2 <- NeuralNetTools::olden(nn, "T2040_mm")
+# NeuralNetTools::olden(nn, bar_plot = FALSE) #for values
+#p1.2 <- p1 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p2.2 <- p2 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+p2.3 <- p2.2 + 
+    geom_errorbar(data = quantiles_olden, aes(x = parameter, 
+                                              ymin = lower, 
+                                              ymax = upper), width = 0.2, col = "black")
+#p1.2; 
+p2.2; p2.3
 ```
 NeuralNetTools::olden(nn) zeigt auch Vorzeichen: Einige Parameter sind kontraproduktiv für das Neuronale Netzwerk. Sie wurden daher in einem weiteren Schritt entfernt.
 https://www.jstatsoft.org/article/view/v085i11
@@ -156,15 +279,26 @@ https://www.jstatsoft.org/article/view/v085i11
 #NeuralNetTools::lekprofile(nn)
 ```
 \
+### Modell mit Test-Daten evaluieren
+```{r}
+Predict <- compute(nn,test)
+# prob <- Predict$net.result
+# pred <- ifelse(prob>0.5, 1, 0)
+# pred
+```
 ### MSE berechnen:
 ```{r}
-y_raw <- input_df$T0060_mm
+#target_y <- "T0020_mm"
+#target_y <- "T2040_mm"
+target_y <- "T4060_mm"
+
+y_raw <- input_df %>% pull(target_y)
 maxy <-max(y_raw)
 miny <-min(y_raw)
 
 Predict_ <- Predict$net.result*(maxy-miny)+miny
 
-test.r <- (test$T0060_mm)*(maxy-miny)+ miny
+test.r <- (test %>% pull(target_y))*(maxy-miny)+ miny
 
 MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(test)
 MSE.nn
@@ -184,18 +318,20 @@ predict_all_net <- predict_all$net.result*(maxy-miny)+miny
 df1 <- as.data.table(data.frame(actual_value = y_raw, 
                                 predicted_value = predict_all_net,
                                 input = "alle_Daten")) %>% bind_cols(idx_saetze)
-df2 <- as.data.table(data.frame(actual_value =test.r, 
-                                predicted_value = Predict_,
-                                input = "test_Daten"))%>% bind_cols(idx_saetze[-idx,])
-df_all <- bind_rows(df1, df2)
+# df2 <- as.data.table(data.frame(actual_value =test.r, 
+#                                 predicted_value = Predict_,
+#                                 input = "test_Daten"))%>% bind_cols(idx_saetze[-idx,])
+# df_all <- bind_rows(df1, df2)
 ```
 
 ```{r}
-p1 <- ggplot(df_all, aes(actual_value, predicted_value,
-                         color=as.factor(satz_id))) + 
+p1 <- ggplot(df1, aes(actual_value, predicted_value,
+                      color=as.factor(satz_id))) + 
     geom_point() + 
     geom_abline(slope = 1, intercept = 0, color = "red")+
-    ylab("ANN predicted AWC (%)") + xlab("actual AWC (%)") + 
+    #ylab("ANN predicted AWC (%)") + xlab("actual AWC (%)") + 
+    ylab("ANN predicted soil water content (mm)") + 
+    xlab("Measured soil water content (mm)") + 
     # facet_grid(.~input) + 
     theme_bw() + 
     coord_fixed() + 
@@ -205,203 +341,73 @@ p1 <- ggplot(df_all, aes(actual_value, predicted_value,
 p1
 
 #Modellguete R2:
-summary(lm(predicted_value ~actual_value, data = df_all))$adj.r.squared
+summary(lm(predicted_value ~actual_value, data = df1))$adj.r.squared
 #Modellguete MSE:
 MSE.nn
 ```
 
 ```{r}
-ggsave(plot = p1, "../graphics/ANNI_actual_predicted.png", device = "png", 
-       width = 4, height = 4, dpi = 300)
+# ggsave(plot = p1, "../graphics/ANNI_actual_predicted.png", device = "png", 
+#        width = 4, height = 4, dpi = 300)
 ```
 
-
-
-
-
-# Keras Tensorflow
-
-<!-- #V2 -->
-<!-- ```{r} -->
-<!-- n <- neuralnet(T0060_mm ~  -->
-<!--                    tage_seit_aussaat+  -->
-<!--                    Tempsum+ -->
-<!--                    Tmax_gradC+ -->
-<!--                    Tmin_gradC+ -->
-<!--                    Tmean_gradC+ -->
-<!--                    wasser_input_Vortag+ -->
-<!--                    T0020_nFK_Vortag+ -->
-<!--                    T2040_nFK_Vortag+ -->
-<!--                    T4060_nFK_Vortag+ -->
-<!--                    relLuftfeuchte_mean_prozent+ -->
-<!--                    relLuftfeuchte_min_prozent+ -->
-<!--                    Gobsum + -->
-<!--                    globalstrahlung_Mj_m2 + -->
-<!--                    windgeschwindigkeit_m_s, -->
-
-<!--                data=train, -->
-<!--                hidden = c(10), -->
-<!--                linear.output = F, -->
-<!--                lifesign = 'full', -->
-<!--                rep=1) -->
-<!-- ``` -->
-<!-- ```{r} -->
-<!-- plot(n) -->
-<!-- ``` -->
-
-
-#V3
-
-
-
+#Zeireihe plotten:
 ```{r}
-target_x <- c("tage_seit_aussaat",
-              "Tempsum",
-              "Tmax_gradC" ,
-              "Tmin_gradC",
-              "Tmean_gradC",
-              "relLuftfeuchte_mean_prozent",
-              "relLuftfeuchte_min_prozent",
-              "Gobsum",
-              "globalstrahlung_Mj_m2",
-              "windgeschwindigkeit_m_s",
-              "T0020_nFK_Vortag",
-              "T2040_nFK_Vortag",
-              "T4060_nFK_Vortag",           
-              "wasser_input_Vortag"  )
+df1$tage_seit_aussaat <- (input_df %>% pull(tage_seit_aussaat))
+df1$wiederholung <- (input_df %>% pull(wiederholung))
 
-target_y <- "T0060_mm" 
-
-idx1 <- match(target_x,names(input_df))
-idx2 <- match(target_y,names(input_df))
-
+#df1_melted...
+# input_df[idx,"tage_seit_aussaat"]
+# input_df[-idx,"tage_seit_aussaat"]
 ```
 
 
 ```{r}
-data <- as.matrix(input_df[,c(idx2, idx1)])
-dimnames(data) <- NULL
-```
+ggplot(df1 %>% filter(satz_id == 4, variante_H2O == "Wfull_plus", wiederholung == "a"), 
+       aes(tage_seit_aussaat)) + 
+    geom_line(aes(y=actual_value, col = "actual_value")) + 
+    geom_line(aes(y=predicted_value, col = "predicted_value"))
 
-
-```{r}
-set.seed(123)
-ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
-training <- data[ind==1,2:ncol(data)]
-test <- data[ind==2, 2:ncol(data)]
-trainingtarget <- data[ind==1, 1]
-testtarget <- data[ind==2,1]
-str(trainingtarget)
-str(testtarget)
-```
-```{r}
-m <- colMeans(training)
-s <- apply(training, 2, sd)
-training <- scale(training, center = m, scale = s)
-test <- scale(test, center = m, scale = s)
-```
-
-```{r}
-model <- keras::keras_model_sequential()
-model %>%
-    layer_dense(units = 5, activation = 'sigmoid', input_shape = c(10,4)) %>%
-    layer_dense(units = 1)
-```
-
-```{r}
-model %>% compile(loss = 'mse',
-                  optimizer = 'rmsprop',
-                  metrics = 'mae')
-```
-
-```{r}
-mymodel <- model %>%
-    fit(training,trainingtarget,
-        epochs = 100,
-        batch_size = 32,
-        validation_split = 0.2)
-```
-
-```{r}
-model %>% evaluate(test, testtarget)
-pred <- model %>% predict(test)
-mean((testtarget-pred)^2)
-```
-```{r}
-plot(testtarget, pred)
-```
-Modell speichern:
-For Sequential Models and models built using the Functional API use:
-
-save_model_hdf5()/load_model_hdf5() 
-    to save the entire model to disk, including the optimizer state. 
-    You can also use save_model_tf/load_model_tf to save the entire model to the SavedModel format.
-
-get_config()/from_config() 
-    to load only the model architecture into an R object.
-
-model_to_json()/model_from_json() 
-    to save only the architecture of the model to a single string.
-    useful for saving the architecture to disk. 
-    You can also use model_to_yaml()/model_from_yaml() to save the architecture.
-
-save_model_weights_hdf5()/load_model_weights_hdf5() 
-    if you want to save only the model weights to disk in the hdf5 format. 
-    You can also use save_model_weights_tf()/load_model_weights_tf() to save the weights in the SavedModel format.
-
-```{r}
-# Save entire model to the SavedModel format
-model %>% save_model_tf("Model1/")
-
-save_model_hdf5(model, "model.h5")
-```
-
-Saved Model
-A SavedModel contains a complete TensorFlow program, including weights and computation. It does not require the original model building code to run, which makes it useful for sharing or deploying (with TFLite, TensorFlow.js, TensorFlow Serving, or TensorFlow Hub).
-
-
-#V4
-
-```{r}
-model <- keras::keras_model_sequential()
-
-model %>%
-    layer_dense(units = 20, activation = 'relu', input_shape = c(12)) %>%
-    layer_dropout(rate=0.4)  %>%
-    layer_dense(units = 50, activation = 'relu')  %>%
-    layer_dropout(rate=0.2)  %>%
-    layer_dense(units = 20, activation = 'relu')  %>%
-    layer_dropout(rate=0.2)  %>%
-    layer_dense(units = 1)
-```
-
-```{r}
-model %>% compile(loss = 'mse',
-                  optimizer = 'rmsprop',
-                  metrics = 'mae')
-```
-
-```{r message=FALSE, include=FALSE}
-mymodel <- model %>%
-    fit(training,trainingtarget,
-        epochs = 100,
-        batch_size = 32,
-        validation_split = 0.2)
-```
-
-```{r}
-model %>% evaluate(test, testtarget)
-pred <- model %>% predict(test)
-mean((testtarget-pred)^2)
-```
-```{r}
-plot(testtarget, pred)
+ggplot(df1 %>% filter(satz_id == 5, variante_H2O == "Wfull", wiederholung == "c"), 
+       aes(tage_seit_aussaat)) + 
+    geom_line(aes(y=actual_value, col = "actual_value")) + 
+    geom_line(aes(y=predicted_value, col = "predicted_value"))
 ```
 
 
 
-#V4
-```{r}
 
-```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
