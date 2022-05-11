@@ -59,8 +59,8 @@ target <- c("tage_seit_aussaat",
             "Gobsum", "globalstrahlung_Mj_m2", "niederschlag_mm", 
             "windgeschwindigkeit_m_s", "FAO56_mm", 
             "T0020_mm", "T2040_mm", "T4060_mm", 
-#            "T0020_Auswaschung_mm_Vortag", "T2040_Auswaschung_mm_Vortag", "T4060_Auswaschung_mm_Vortag",   
-#            "freier_Speicher_T0020_mm_Vortag", "freier_Speicher_T2040_mm_Vortag", "freier_Speicher_T4060_mm_Vortag",
+            #            "T0020_Auswaschung_mm_Vortag", "T2040_Auswaschung_mm_Vortag", "T4060_Auswaschung_mm_Vortag",   
+            #            "freier_Speicher_T0020_mm_Vortag", "freier_Speicher_T2040_mm_Vortag", "freier_Speicher_T4060_mm_Vortag",
             #"T0060_mm",
             #"T0020_nFK_Vortag", "T2040_nFK_Vortag", "T4060_nFK_Vortag",
             "T0020_mm_Vortag", "T2040_mm_Vortag", "T4060_mm_Vortag"
@@ -216,13 +216,17 @@ nn4060=map(1:20,
 ```
 #Chose best repetition
 ```{r}
-#nn_list <- nn0020 
-#nn_list <- nn2040
-nn_list <- nn4060
-errors1 <- map_dbl(nn_list, ~.x$result.matrix[1,])
-best_rep <-  which.min(errors1 )
-cat("Best Repetition ist: #", best_rep)
-nn <- nn_list[[best_rep]]
+# #nn_list <- nn0020 
+# #nn_list <- nn2040
+# nn_list <- nn4060
+# errors1 <- map_dbl(nn_list, ~.x$result.matrix[1,])
+# best_rep <-  which.min(errors1 )
+# cat("Best Repetition ist: #", best_rep)
+# nn <- nn_list[[best_rep]]
+
+nn0020_best <- nn_list_extract(nn_list = nn0020, target_y = "T0020_mm")
+nn2040_best <- nn_list_extract(nn_list = nn2040, target_y = "T2040_mm")
+nn4060_best <- nn_list_extract(nn_list = nn4060, target_y = "T4060_mm")
 
 ```
 
@@ -230,13 +234,31 @@ nn <- nn_list[[best_rep]]
 ### Nodes plotten
 ```{r}
 #plot(nn)
-plot(nn,col.hidden = 'darkgreen', 
+# tree_plots <- map(list(nn0020_best, nn2040_best, nn4060_best),
+#     ~p1 <- 
+plot(nn0020_best[["nn"]],col.hidden = 'darkgreen', 
      col.hidden.synapse = 'darkgreen',
      show.weights = F,
      information = T,
-     fill = 'lightblue')
+     fill = 'lightblue', 
+     #dimension = c(15,13),
+     fontsize = 10,
+     information.pos = 100
+)
+# )
+
 ```
 ```{r}
+for(i in 1:3){
+    par(mar = c(0,0,0,0) )
+    NeuralNetTools::plotnet(mod_in = list(nn0020_best, nn2040_best, nn4060_best)[[i]][["nn"]], 
+                            max_sp = TRUE, pad_x = 0.6, cex_val = 0.8)
+}
+```
+
+#obsolet: Olden variance pro repetition berechnen:
+```{r}
+#importance of variable per repetiton
 olden_per_rep <- function(i, nn_list){
     new_name <- paste0("importance_",i)
     olden1 <- NeuralNetTools::olden(nn_list[[i]], bar_plot = FALSE) %>%
@@ -244,19 +266,46 @@ olden_per_rep <- function(i, nn_list){
     olden1
 }
 
-importance_100 <- map(1:20, ~olden_per_rep(i = .x, nn_list = nn_list)) %>% bind_cols()
-```
-```{r}
-tt <- t(importance_100) %>% as_data_frame() 
-quantiles_olden <- map_df(tt, ~quantile(., probs = c(0.05,0.95)), .id="parameter") %>%
-    set_names("parameter","lower", "upper")
-quantiles_olden
+olden_90_percentile <- function(all_olden_df){
+    tt <- t(all_olden_df) %>% as_data_frame() 
+    quantiles_olden <- map_df(tt, ~quantile(., probs = c(0.05,0.95)), .id="parameter") %>%
+        set_names("parameter","lower", "upper")
+    quantiles_olden
+}
+
+
+importance_0020 <- map(1:20, ~olden_per_rep(i = .x, nn_list = nn0020)) %>% bind_cols()
+importance_2040 <- map(1:20, ~olden_per_rep(i = .x, nn_list = nn2040)) %>% bind_cols()
+importance_4060 <- map(1:20, ~olden_per_rep(i = .x, nn_list = nn4060)) %>% bind_cols()
+
+
+olden_90_0020 <-  olden_90_percentile(all_olden_df = importance_0020)
+olden_90_2040 <-  olden_90_percentile(all_olden_df = importance_2040)
+olden_90_4060 <-  olden_90_percentile(all_olden_df = importance_4060)
+
 ```
 
 
 \
 
+#Olden Plots:
 ```{r}
+plots_olden <- map(list(nn0020_best=nn0020_best, nn2040_best=nn2040_best, nn4060_best=nn4060_best),
+                   ~NeuralNetTools::olden(.x[["nn"]]) +
+                       theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+)
+plots_olden
+
+# Add: 90%-Range for olden for 20 repitions: 
+# map(seq_along(plots_olden), ~plots_olden[[.x]] +
+#         geom_errorbar(data = list(olden_90_0020,olden_90_2040,olden_90_4060)[[.x]], 
+#                       aes(x = parameter, 
+#                           ymin = lower, 
+#                           ymax = upper), width = 0.2, col = "black"))
+```
+
+#Olden einzeln erstellen:
+```{r, eval=FALSE}
 #p1 <- NeuralNetTools::garson(nn) 
 p2 <- NeuralNetTools::olden(nn)
 ## Beu Multi-Outpu-Data:
@@ -264,87 +313,96 @@ p2 <- NeuralNetTools::olden(nn)
 # NeuralNetTools::olden(nn, bar_plot = FALSE) #for values
 #p1.2 <- p1 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
 p2.2 <- p2 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
-p2.3 <- p2.2 + 
-    geom_errorbar(data = quantiles_olden, aes(x = parameter, 
-                                              ymin = lower, 
-                                              ymax = upper), width = 0.2, col = "black")
-#p1.2; 
-p2.2; p2.3
+p2.2
 ```
 NeuralNetTools::olden(nn) zeigt auch Vorzeichen: Einige Parameter sind kontraproduktiv für das Neuronale Netzwerk. Sie wurden daher in einem weiteren Schritt entfernt.
 https://www.jstatsoft.org/article/view/v085i11
+
+
+
+
 
 ```{r}
 # Nur bei einem hidden layer möglich.
 #NeuralNetTools::lekprofile(nn)
 ```
 \
-### Modell mit Test-Daten evaluieren
+<!-- ### Modell mit Test-Daten evaluieren -->
+<!-- ```{r} -->
+<!-- Predict <- compute(nn,test) -->
+<!-- # prob <- Predict$net.result -->
+<!-- # pred <- ifelse(prob>0.5, 1, 0) -->
+<!-- # pred -->
+<!-- ``` -->
+<!-- ### MSE berechnen: -->
+<!-- ```{r} -->
+<!-- #target_y <- "T0020_mm" -->
+<!-- #target_y <- "T2040_mm" -->
+<!-- target_y <- "T4060_mm" -->
+
+<!-- y_raw <- input_df %>% pull(target_y) -->
+<!-- maxy <-max(y_raw) -->
+<!-- miny <-min(y_raw) -->
+
+<!-- Predict_ <- Predict$net.result*(maxy-miny)+miny -->
+
+<!-- test.r <- (test %>% pull(target_y))*(maxy-miny)+ miny -->
+
+<!-- MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(test) -->
+<!-- MSE.nn -->
+<!-- ``` -->
+<!-- \ -->
+
+
+<!-- ```{r} -->
+<!-- predict_all <- compute(nn, input_df.scaled) -->
+<!-- predict_all_net <- predict_all$net.result*(maxy-miny)+miny -->
+<!-- #predict_all_net -->
+<!-- ``` -->
+
+<!-- ### Plot: Predicted values ~ actual values -->
+<!-- ```{r} -->
+<!-- #rm(df1, df2) -->
+<!-- df1 <- as.data.table(data.frame(actual_value = y_raw,  -->
+<!--                                 predicted_value = predict_all_net, -->
+<!--                                 input = "alle_Daten")) %>% bind_cols(idx_saetze) -->
+<!-- # df2 <- as.data.table(data.frame(actual_value =test.r,  -->
+<!-- #                                 predicted_value = Predict_, -->
+<!-- #                                 input = "test_Daten"))%>% bind_cols(idx_saetze[-idx,]) -->
+<!-- # df_all <- bind_rows(df1, df2) -->
+<!-- ``` -->
+
 ```{r}
-Predict <- compute(nn,test)
-# prob <- Predict$net.result
-# pred <- ifelse(prob>0.5, 1, 0)
-# pred
+plot_measured_predicted <- function(data){
+    p1 <- ggplot(data, aes(actual_value, predicted_value,
+                           color=as.factor(satz_id))) + 
+        geom_point() + 
+        geom_abline(slope = 1, intercept = 0, color = "red")+
+        #ylab("ANN predicted AWC (%)") + xlab("actual AWC (%)") + 
+        ylab("ANN predicted soil water content (mm)") + 
+        xlab("Measured soil water content (mm)") + 
+        # facet_grid(.~input) + 
+        theme_bw() + 
+        coord_fixed() + 
+        theme(panel.grid = element_blank(),
+              legend.position = "bottom") +
+        scale_color_discrete("Spinat_satz")
+    p1
+}
+
+map(list(nn0020_best, nn2040_best, nn4060_best),
+    ~plot_measured_predicted(data = .x[["df1"]]))
 ```
-### MSE berechnen:
+#Lm pro Bodentiefe:
 ```{r}
-#target_y <- "T0020_mm"
-#target_y <- "T2040_mm"
-target_y <- "T4060_mm"
-
-y_raw <- input_df %>% pull(target_y)
-maxy <-max(y_raw)
-miny <-min(y_raw)
-
-Predict_ <- Predict$net.result*(maxy-miny)+miny
-
-test.r <- (test %>% pull(target_y))*(maxy-miny)+ miny
-
-MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(test)
-MSE.nn
-```
-\
-
-
-```{r}
-predict_all <- compute(nn, input_df.scaled)
-predict_all_net <- predict_all$net.result*(maxy-miny)+miny
-#predict_all_net
+all_predicted <- map_df(list(S0020_cm = nn0020_best, S2040_cm = nn2040_best, S4060_cm = nn4060_best),
+                        ~.x[["df1"]], .id = "BodenTiefe")
+plot_measured_predicted(data = all_predicted) + aes(col=BodenTiefe, group = BodenTiefe) +
+    geom_smooth(method = "lm", col="black") +
+    scale_color_discrete("Soil depth:")
 ```
 
-### Plot: Predicted values ~ actual values
-```{r}
-#rm(df1, df2)
-df1 <- as.data.table(data.frame(actual_value = y_raw, 
-                                predicted_value = predict_all_net,
-                                input = "alle_Daten")) %>% bind_cols(idx_saetze)
-# df2 <- as.data.table(data.frame(actual_value =test.r, 
-#                                 predicted_value = Predict_,
-#                                 input = "test_Daten"))%>% bind_cols(idx_saetze[-idx,])
-# df_all <- bind_rows(df1, df2)
-```
 
-```{r}
-p1 <- ggplot(df1, aes(actual_value, predicted_value,
-                      color=as.factor(satz_id))) + 
-    geom_point() + 
-    geom_abline(slope = 1, intercept = 0, color = "red")+
-    #ylab("ANN predicted AWC (%)") + xlab("actual AWC (%)") + 
-    ylab("ANN predicted soil water content (mm)") + 
-    xlab("Measured soil water content (mm)") + 
-    # facet_grid(.~input) + 
-    theme_bw() + 
-    coord_fixed() + 
-    theme(panel.grid = element_blank(),
-          legend.position = "bottom") +
-    scale_color_discrete("Spinat_satz")
-p1
-
-#Modellguete R2:
-summary(lm(predicted_value ~actual_value, data = df1))$adj.r.squared
-#Modellguete MSE:
-MSE.nn
-```
 
 ```{r}
 # ggsave(plot = p1, "../graphics/ANNI_actual_predicted.png", device = "png", 
@@ -353,8 +411,14 @@ MSE.nn
 
 #Zeireihe plotten:
 ```{r}
-df1$tage_seit_aussaat <- (input_df %>% pull(tage_seit_aussaat))
-df1$wiederholung <- (input_df %>% pull(wiederholung))
+add_DAS_to_output_df <- function(data){
+data$tage_seit_aussaat <- (input_df %>% pull(tage_seit_aussaat))
+data$wiederholung <- (input_df %>% pull(wiederholung))
+data
+}
+
+map(list(S0020_cm = nn0020_best, S2040_cm = nn2040_best, S4060_cm = nn4060_best),
+    ~add_DAS_to_output_df(data = .x[["df1"]]))
 
 #df1_melted...
 # input_df[idx,"tage_seit_aussaat"]

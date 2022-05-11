@@ -19,11 +19,8 @@ Predict <- compute(nn,test)
 y_raw <- input_df %>% pull(target_y)
 maxy <-max(y_raw)
 miny <-min(y_raw)
-
 Predict_ <- Predict$net.result*(maxy-miny)+miny
-
 test.r <- (test %>% pull(target_y))*(maxy-miny)+ miny
-
 MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(test)
 MSE.nn
 
