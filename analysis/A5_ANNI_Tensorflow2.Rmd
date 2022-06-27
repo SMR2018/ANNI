@@ -1,0 +1,151 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+```
+
+
+### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+```{r}
+rm(list = ls())
+input_tabelle <- data.table::fread(
+    "../data/derived_data/input_tabelle_2020_2021_20220504.csv", 
+    sep = ";", dec = ".") %>% as_tibble()
+```
+\
+### nFK vom Vortag als Input ausweisen:
+```{r}
+input_tabelle <- 
+    input_tabelle %>%
+    mutate(T0020_mm_Vortag = c(NA,T0020_mm[1:(n()-1)]),
+           T2040_mm_Vortag = c(NA,T2040_mm[1:(n()-1)]),
+           T4060_mm_Vortag = c(NA,T4060_mm[1:(n()-1)])) %>%
+    mutate(T0020_Auswaschung_mm_Vortag = c(NA,T0020_Auswaschung_mm[1:(n()-1)]),
+           T2040_Auswaschung_mm_Vortag = c(NA,T2040_Auswaschung_mm[1:(n()-1)]),
+           T4060_Auswaschung_mm_Vortag = c(NA,T4060_Auswaschung_mm[1:(n()-1)])) %>% 
+    mutate_at(c("freier_Speicher_T0020_mm", "freier_Speicher_T2040_mm", 
+                "freier_Speicher_T4060_mm"), ~ifelse(.<0,0,.)) %>%
+    mutate(freier_Speicher_T0020_mm_Vortag = c(NA,freier_Speicher_T0020_mm[1:(n()-1)]),
+           freier_Speicher_T2040_mm_Vortag = c(NA,freier_Speicher_T2040_mm[1:(n()-1)]),
+           freier_Speicher_T4060_mm_Vortag = c(NA,freier_Speicher_T4060_mm[1:(n()-1)])) 
+
+# slice(-1) #erste Zeile entfernt, da hier NA
+```
+\
+### Wassereintrag aus P + Bewässerung berechnen. Benötigte Variablen selektieren.
+```{r}
+target <- c("T0020_mm", "T2040_mm", "T4060_mm",
+            "T0020_mm_Vortag","tage_seit_aussaat", 
+            "bewaesserung_mm", "Tempsum", "Tmax_gradC", "Tmin_gradC", "Tmean_gradC", 
+            "relLuftfeuchte_mean_prozent", "relLuftfeuchte_min_prozent", 
+            "Gobsum", "globalstrahlung_Mj_m2", "niederschlag_mm", 
+            "windgeschwindigkeit_m_s",
+            "T0020_mm_Vortag","T2040_mm_Vortag", "T4060_mm_Vortag"
+)
+
+input_df <- input_tabelle %>% #[1:100,] %>%
+    select(satz_id, variante_H2O,wiederholung, target) %>%
+    rowwise() %>%
+    mutate(wasser_input = sum(niederschlag_mm, bewaesserung_mm, na.rm = TRUE)) %>%
+    ungroup %>%
+    mutate(wasser_input_Vortag = c(NA,wasser_input[1:(n()-1)])) %>%
+    select(-niederschlag_mm, -bewaesserung_mm, -wasser_input,-wiederholung, -satz_id, -variante_H2O) %>%
+    tidyr::drop_na()
+```
+
+```{r}
+# data("BostonHousing")
+# data <- BostonHousing
+# str(data)
+
+data <- input_df
+```
+
+```{r}
+data <- data %>% mutate_all(as.numeric)
+data <- as.matrix(data)
+dimnames(data) <- NULL
+set.seed(123)
+ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
+training <- data[ind==1,4:17]
+test <- data[ind==2, 4:17]
+trainingtarget <- data[ind==1, 1:3]
+testtarget <- data[ind==2, 1:3]
+
+# ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
+# training <- data[ind==1,1:13]
+# test <- data[ind==2, 1:13]
+# trainingtarget <- data[ind==1, 14]
+# testtarget <- data[ind==2, 14]
+
+str(trainingtarget)
+str(testtarget)
+```
+
+
+
+```{r}
+m <- colMeans(training)
+s <- apply(training, 2, sd)
+training <- scale(training, center = m, scale = s)
+test <- scale(test, center = m, scale = s)
+```
+
+
+
+```{r}
+model <- keras_model_sequential()
+model %>%
+         layer_dense(units = 5, activation = 'sigmoid', input_shape = c(14)) %>%
+         layer_dense(units = 3)
+```
+
+
+
+```{r}
+model %>% compile(loss = 'mse',
+optimizer = 'rmsprop', 
+metrics = 'mae') 
+```
+
+
+
+```{r}
+mymodel <- model %>%          
+fit(training,trainingtarget,
+             epochs = 100,
+             batch_size = 32,
+             validation_split = 0.2
+    )
+```
+
+
+```{r}
+model %>% evaluate(test, testtarget)
+pred <- model %>% predict(test)
+mean((testtarget-pred)^2) 
+```
+
+
+
+```{r}
+plot(testtarget, pred) 
+```
+
+```{r}
+model %>%
+         layer_dense(units = 100, activation = 'sigmoid', input_shape = c(14)) %>%
+        layer_dropout(rate=0.4)  %>%
+        layer_dense(units = 50, activation = 'sigmoid')  %>%
+        layer_dropout(rate=0.2)  %>%
+         layer_dense(units = 1)
+```
+
