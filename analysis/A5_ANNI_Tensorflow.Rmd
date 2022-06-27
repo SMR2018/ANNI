@@ -23,7 +23,7 @@ library(keras)
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 ```{r}
 input_tabelle <- data.table::fread(
-    "../data/derived_data/input_tabelle_2020_2021_20220315.csv", 
+    "../data/derived_data/alt/input_tabelle_2020_2021_20220315.csv", 
     sep = ";", dec = ".") %>% as_tibble()
 ```
 \
@@ -33,7 +33,10 @@ input_tabelle <-
     input_tabelle %>%
     mutate(T0020_nFK_Vortag = c(NA,T0020_nFK[1:(n()-1)]),
            T2040_nFK_Vortag = c(NA,T2040_nFK[1:(n()-1)]),
-           T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) #%>%
+           T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) %>%
+    mutate(T0020_mm_Vortag = c(NA,T0020_mm[1:(n()-1)]),
+           T2040_mm_Vortag = c(NA,T2040_mm[1:(n()-1)]),
+           T4060_mm_Vortag = c(NA,T4060_mm[1:(n()-1)]))
 # slice(-1) #erste Zeile entfernt, da hier NA
 ```
 \
@@ -44,9 +47,10 @@ target <- c("tage_seit_aussaat",
             "relLuftfeuchte_mean_prozent", "relLuftfeuchte_min_prozent", 
             "Gobsum", "globalstrahlung_Mj_m2", "niederschlag_mm", 
             "windgeschwindigkeit_m_s", "FAO56_mm", 
-            #"T0020_mm", "T2040_mm", "T4060_mm", 
+            "T0020_mm", "T2040_mm", "T4060_mm", 
             "T0060_mm",
-            "T0020_nFK_Vortag", "T2040_nFK_Vortag", "T4060_nFK_Vortag")
+            "T0020_nFK_Vortag", "T2040_nFK_Vortag", "T4060_nFK_Vortag",
+            "T0020_mm_Vortag", "T2040_mm_Vortag", "T4060_mm_Vortag")
 input_df <- input_tabelle %>% #[1:100,] %>%
     select(satz_id, variante_H2O, target) %>%
     rowwise() %>%
@@ -74,12 +78,12 @@ target_x <- c("tage_seit_aussaat",
               "Gobsum",
               "globalstrahlung_Mj_m2",
               "windgeschwindigkeit_m_s",
-              "T0020_nFK_Vortag",
-              "T2040_nFK_Vortag",
-              "T4060_nFK_Vortag",           
+              "T0020_mm_Vortag",
+              "T2040_mm_Vortag",
+              "T4060_mm_Vortag",
               "wasser_input_Vortag"  )
 
-target_y <- "T0060_mm" 
+target_y <- "T0020_mm" 
 
 idx1 <- match(target_x,names(input_df))
 idx2 <- match(target_y,names(input_df))
@@ -102,33 +106,51 @@ trainingtarget <- data[ind==1, 1]
 testtarget <- data[ind==2,1]
 str(trainingtarget)
 str(testtarget)
+
+str(training)
+str(test)
 ```
 ```{r}
 m <- colMeans(training)
 s <- apply(training, 2, sd)
 training <- scale(training, center = m, scale = s)
 test <- scale(test, center = m, scale = s)
+str(training)
+str(test)
+
+
+m <- mean(trainingtarget)
+s <- sd(testtarget)
+trainingtarget <- scale(trainingtarget, center = m, scale = s)
+testtarget <- scale(testtarget, center = m, scale = s)
+str(trainingtarget)
+str(testtarget)
 ```
 
 ```{r}
-model <- keras::keras_model_sequential()
+# model <- keras::keras_model_sequential()
+# model %>%
+#     layer_dense(units = 5, activation = 'sigmoid', input_shape = c(10,4)) %>%
+#     layer_dense(units = 1)
+
+model <- keras_model_sequential()
 model %>%
-    layer_dense(units = 5, activation = 'sigmoid', input_shape = c(10,4)) %>%
+    layer_dense(units = 5, activation = 'relu', input_shape = c(13)) %>%
     layer_dense(units = 1)
 ```
 
 ```{r}
 model %>% compile(loss = 'mse',
-                  optimizer = 'rmsprop',
-                  metrics = 'mae')
+                  optimizer = 'rmsprop', 
+                  metrics = 'mae') 
 ```
 
 ```{r}
-mymodel <- model %>%
-    fit(training,trainingtarget,
-        epochs = 100,
-        batch_size = 32,
-        validation_split = 0.2)
+mymodel <- model %>%          
+fit(training,trainingtarget,
+             epochs = 100,
+             batch_size = 32,
+             validation_split = 0.2)
 ```
 
 ```{r}
@@ -136,6 +158,8 @@ model %>% evaluate(test, testtarget)
 pred <- model %>% predict(test)
 mean((testtarget-pred)^2)
 ```
+
+
 ```{r}
 plot(testtarget, pred)
 ```
@@ -143,20 +167,20 @@ Modell speichern:
 For Sequential Models and models built using the Functional API use:
 
 save_model_hdf5()/load_model_hdf5() 
-    to save the entire model to disk, including the optimizer state. 
-    You can also use save_model_tf/load_model_tf to save the entire model to the SavedModel format.
+to save the entire model to disk, including the optimizer state. 
+You can also use save_model_tf/load_model_tf to save the entire model to the SavedModel format.
 
 get_config()/from_config() 
-    to load only the model architecture into an R object.
+to load only the model architecture into an R object.
 
 model_to_json()/model_from_json() 
-    to save only the architecture of the model to a single string.
-    useful for saving the architecture to disk. 
-    You can also use model_to_yaml()/model_from_yaml() to save the architecture.
+to save only the architecture of the model to a single string.
+useful for saving the architecture to disk. 
+You can also use model_to_yaml()/model_from_yaml() to save the architecture.
 
 save_model_weights_hdf5()/load_model_weights_hdf5() 
-    if you want to save only the model weights to disk in the hdf5 format. 
-    You can also use save_model_weights_tf()/load_model_weights_tf() to save the weights in the SavedModel format.
+if you want to save only the model weights to disk in the hdf5 format. 
+You can also use save_model_weights_tf()/load_model_weights_tf() to save the weights in the SavedModel format.
 
 ```{r}
 # Save entire model to the SavedModel format
