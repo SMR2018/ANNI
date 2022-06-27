@@ -292,9 +292,12 @@ source("../scripts/nfk_plot_functions.R")
 
 ```{r}
 #Beispiel:
-plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE, grafik = NULL) #grafik = "smooth")
-plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wred'", 
+#px <- 
+plot_nfk(satz_nr = 6, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE, grafik = NULL) #grafik = "smooth")
+plot_nfk(satz_nr = 6, subtitle = "2021, Satz 1, Feld 6, Variante 'Wred'", 
          wdh = TRUE, variante = "Wred", grafik = "smooth")
+
+#ggsave(filename = "../graphics/X20cm_Schritte/nFK_2022_Satz1.png", plot = px, device = "png", width = 10, height = 6, dpi = 300)
 ```
 
 
@@ -311,8 +314,8 @@ p2 <- plot_nfk(satz_nr = 2, subtitle = "2020, Satz 2, Feld 4a (*Paper)", wdh = F
 p3 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6", wdh = FALSE, grafik = grafik)
 p4 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b", wdh = FALSE, grafik = grafik)
 p5 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE, grafik = grafik)
-
-p2; p3; p4; p5
+p6 <- plot_nfk(satz_nr = 6, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE, grafik = grafik) 
+p2; p3; p4; p5; p6
 ```
 
 #Grafik speichern
