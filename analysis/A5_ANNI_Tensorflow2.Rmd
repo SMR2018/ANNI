@@ -52,23 +52,26 @@ target <- c("T0020_mm", "T2040_mm", "T4060_mm",
 )
 
 input_df <- input_tabelle %>% #[1:100,] %>%
-    select(satz_id, variante_H2O,wiederholung, target) %>%
+    select(satz_id, variante_H2O,wiederholung, all_of(target)) %>%
     rowwise() %>%
     mutate(wasser_input = sum(niederschlag_mm, bewaesserung_mm, na.rm = TRUE)) %>%
     ungroup %>%
     mutate(wasser_input_Vortag = c(NA,wasser_input[1:(n()-1)])) %>%
     select(-niederschlag_mm, -bewaesserung_mm, -wasser_input,-wiederholung, -satz_id, -variante_H2O) %>%
     tidyr::drop_na()
-```
 
-```{r}
-# data("BostonHousing")
-# data <- BostonHousing
-# str(data)
-
+#workflow mit "data"
 data <- input_df
+data
+
+rm(input_tabelle)
 ```
 
+
+#ANNI: 
+#Matrix mit y (Bodenfeuchte pro Schicht: "T0020_mm", "T2040_mm", "T4060_mm")
+#und x (Wetterdaten, Bodenfeuchte pro Schicht des Vortages, Tage seit Aussaat) 
+Tage seit Aussaat ändern in Tage seit Auflaufen??
 ```{r}
 data <- data %>% mutate_all(as.numeric)
 data <- as.matrix(data)
@@ -91,7 +94,8 @@ str(testtarget)
 ```
 
 
-
+#Daten skalieren. 
+Später neue Daten anhand dieser Werte skalieren
 ```{r}
 m <- colMeans(training)
 s <- apply(training, 2, sd)
@@ -100,16 +104,26 @@ test <- scale(test, center = m, scale = s)
 ```
 
 
-
+#Keras initiieren: Input-Layer und Output-Layer definieren
 ```{r}
 model <- keras_model_sequential()
+# model %>%
+#          layer_dense(units = 5, activation = 'sigmoid', input_shape = c(14)) %>%
+#          layer_dense(units = 3)
+```
+
+#Modell weiter anpassen:
+Lernrate ändern, etc.
+```{r}
 model %>%
-         layer_dense(units = 5, activation = 'sigmoid', input_shape = c(14)) %>%
+         layer_dense(units = 100, activation = 'sigmoid', input_shape = c(14)) %>%
+        layer_dropout(rate=0.4)  %>%
+        layer_dense(units = 50, activation = 'sigmoid')  %>%
+        layer_dropout(rate=0.2)  %>%
          layer_dense(units = 3)
 ```
 
-
-
+#Loss-Function beschreiben
 ```{r}
 model %>% compile(loss = 'mse',
 optimizer = 'rmsprop', 
@@ -117,7 +131,7 @@ metrics = 'mae')
 ```
 
 
-
+#Model trainieren:
 ```{r}
 mymodel <- model %>%          
 fit(training,trainingtarget,
@@ -127,7 +141,7 @@ fit(training,trainingtarget,
     )
 ```
 
-
+#Model evaluieren:
 ```{r}
 model %>% evaluate(test, testtarget)
 pred <- model %>% predict(test)
@@ -137,15 +151,14 @@ mean((testtarget-pred)^2)
 
 
 ```{r}
-plot(testtarget, pred) 
+plot(testtarget[,1], pred[,1]) 
+plot(testtarget[,2], pred[,2]) 
+plot(testtarget[,3], pred[,3]) 
 ```
 
-```{r}
-model %>%
-         layer_dense(units = 100, activation = 'sigmoid', input_shape = c(14)) %>%
-        layer_dropout(rate=0.4)  %>%
-        layer_dense(units = 50, activation = 'sigmoid')  %>%
-        layer_dropout(rate=0.2)  %>%
-         layer_dense(units = 1)
-```
 
+
+
+Weitere Änderungen:
+- Zusätzlich zu "Tage seit Aussaat": Tage seit Auflaufen? 
+- IBI und IRMI (ISARIA-Vegetations-Indices) hinzufügen als Input-Parameter
