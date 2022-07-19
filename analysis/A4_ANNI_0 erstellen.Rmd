@@ -327,8 +327,8 @@ plots_olden
 ```{r}
 p_olden_combined <- ggpubr::ggarrange(plotlist = plots_olden, ncol = 1, 
                                       align = "hv", labels = "auto")
-ggsave(plot = p_olden_combined, filename = "../graphics/Olden_combined.png", 
-       device = "png", width = 8*0.8, height = 10*0.8, dpi = 300)
+# ggsave(plot = p_olden_combined, filename = "../graphics/Olden_combined.png", 
+#        device = "png", width = 8*0.8, height = 10*0.8, dpi = 300)
 ```
 
 ![Olden](../graphics/Olden_combined.png)
@@ -383,8 +383,8 @@ p_all <- plot_measured_predicted(data = all_predicted) + aes(col=BodenTiefe, gro
 p_all
 ```
 ```{r}
-ggsave(plot = p_all, "../graphics/ANNI_actual_predicted_all.png", device = "png",
-       width = 5, height = 5, dpi = 300)
+# ggsave(plot = p_all, "../graphics/ANNI_actual_predicted_all.png", device = "png",
+#        width = 5, height = 5, dpi = 300)
 ```
 
 ```{r}
@@ -468,8 +468,8 @@ p_vertical
 
 
 ```{r}
-ggsave(plot = p_vertical, "../graphics/ANNI_actual_predicted_vertical.png", device = "png",
-       width = 6, height = 5, dpi = 300)
+# ggsave(plot = p_vertical, "../graphics/ANNI_actual_predicted_vertical.png", device = "png",
+#        width = 6, height = 5, dpi = 300)
 ```
 
 ```{r}
@@ -480,8 +480,8 @@ plot_combined <- ggpubr::ggarrange(plotlist = list(p_vertical,p_lm_2),
 plot_combined
 ```
 ```{r}
-ggsave(plot = plot_combined, "../graphics/ANNI_actual_predicted_plot_combined2.png", 
-       device = "png", width = 8, height = 5, dpi = 300)
+# ggsave(plot = plot_combined, "../graphics/ANNI_actual_predicted_plot_combined2.png", 
+#        device = "png", width = 8, height = 5, dpi = 300)
 ```
 
 
