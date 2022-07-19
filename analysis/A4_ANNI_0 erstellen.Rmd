@@ -55,7 +55,7 @@ input_tabelle <-
 \
 ### Wassereintrag aus P + Bewässerung berechnen. Benötigte Variablen selektieren.
 ```{r}
-target <- c("T0020_mm", #"T2040_mm", "T4060_mm",
+target <- c("T0020_mm", "T2040_mm", "T4060_mm",
             "T0020_mm_Vortag","tage_seit_aussaat", 
             "bewaesserung_mm", "Tempsum", "Tmax_gradC", "Tmin_gradC", "Tmean_gradC", 
             "relLuftfeuchte_mean_prozent", "relLuftfeuchte_min_prozent", 
