@@ -1,0 +1,89 @@
+---
+title: "Vergleich Stationsdaten"
+author: "Samantha Rubo"
+date: "2022-07-10"
+---
+
+```{r}
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+```
+
+# Zuordnung zu den Stationen:
+```{r}
+#Schifferstadt = AGM 004
+#Kleinniedesheim = AGM 011
+#Frankenthal-Mörsch = AGM 158
+#Eich = AGM 031
+
+Orte_df <- data.frame(Ort_name = c("Schifferstadt", "Kleinniedesheim", "Frankenthal-Mörsch", "Eich"),
+                      Ort = c("004", "011", "158", "031"))
+```
+
+#Daten einlesen:
+```{r}
+df <- fread(file = "../data/raw_data/DLR_Stationsdaten/Stationsdaten_DLR.csv", dec = ",")
+df <- df %>% 
+    mutate_at("V1", ~as_date(., format = "%d.%m.%Y")) %>%
+    rename(Datum = V1) %>%
+    select(-Tag)
+```
+
+```{r}
+target <- "AVG_RH200" #"AVG_TA200"
+
+name1 <- "Rel_Luftfeu." #"Temp_2m_gradC"
+name2 <- "Relative Luftfeuchtigkeit" #"Temperatur in 2m Höhe (Grad Celsius)"
+
+df1 <- df %>% select(Datum, contains(target)) %>%
+    mutate_at("AVG_RH200_158", ~100-.) %>%
+    pivot_longer(cols = -Datum, names_to = c("xxx","Ort"), names_sep = paste0(target, "_")) %>%
+    select(Datum, Ort, value) %>% #!!sym(name1) := value) %>%
+    left_join(Orte_df, by = "Ort") 
+df1
+```
+
+```{r}
+p1 <- ggplot(df1, aes(Datum, value, color = Ort_name)) +
+    geom_line() +    
+    theme_bw() + 
+    theme(panel.grid = element_blank())+
+    ylab(name2) +
+    scale_color_discrete("")
+p1
+```
+```{r}
+ggsave(plot = p1, filename = "../graphics/Stationsdaten_Unterschied/Rel_Luftf2.png", 
+       device = "png", width = 8, height = 4, dpi = 300)
+```
+
+
+```{r}
+target2 <- names(df %>% select(Datum, contains(target)))[2:5]
+target2
+df2 <- df %>% select(Datum, contains(target)) %>%
+    rowwise() %>%
+    mutate(max_diff = range(AVG_TA200_004,AVG_TA200_011,AVG_TA200_031,AVG_TA200_158) %>% diff,
+           sd1 = sd(c(AVG_TA200_004,AVG_TA200_011,AVG_TA200_031,AVG_TA200_158), na.rm = TRUE))  %>%
+    ungroup()
+```
+
+```{r}
+name3 <- "Temperatur-Differenz (Grad Celsius)"
+p2 <- ggplot() +
+    geom_line(data = df2, aes(Datum, max_diff, color = "Max Diff")) +
+    geom_line(data = df2, aes(Datum, sd1, color = "SD")) +
+    theme_bw() + 
+    theme(panel.grid = element_blank())+
+    ylab(name3) +
+    scale_color_discrete("")
+p2
+```
+```{r}
+ggsave(plot = p2, filename = "../graphics/Stationsdaten_Unterschied/Temp_diff.png", 
+       device = "png", width = 8, height = 4, dpi = 300)
+```
+
