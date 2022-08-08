@@ -34,42 +34,46 @@ input_tabelle <- data.table::fread(
 input_tabelle <- 
     input_tabelle %>%
     ## nFK vom Vortag: 
-    # mutate(T0020_nFK_Vortag = c(NA,T0020_nFK[1:(n()-1)]),
-    #        T2040_nFK_Vortag = c(NA,T2040_nFK[1:(n()-1)]),
-    #        T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) #%>%
+    mutate(T0020_nFK_Vortag = c(NA,T0020_nFK[1:(n()-1)]),
+           T2040_nFK_Vortag = c(NA,T2040_nFK[1:(n()-1)]),
+           T4060_nFK_Vortag = c(NA,T4060_nFK[1:(n()-1)])) %>%
     ## mm vom Vortag:
     mutate(T0020_mm_Vortag = c(NA,T0020_mm[1:(n()-1)]),
            T2040_mm_Vortag = c(NA,T2040_mm[1:(n()-1)]),
            T4060_mm_Vortag = c(NA,T4060_mm[1:(n()-1)])) %>%
-    mutate(T0020_Auswaschung_mm_Vortag = c(NA,T0020_Auswaschung_mm[1:(n()-1)]),
-           T2040_Auswaschung_mm_Vortag = c(NA,T2040_Auswaschung_mm[1:(n()-1)]),
-           T4060_Auswaschung_mm_Vortag = c(NA,T4060_Auswaschung_mm[1:(n()-1)])) %>% 
-    mutate_at(c("freier_Speicher_T0020_mm", "freier_Speicher_T2040_mm", 
-                "freier_Speicher_T4060_mm"), ~ifelse(.<0,0,.)) %>%
-    mutate(freier_Speicher_T0020_mm_Vortag = c(NA,freier_Speicher_T0020_mm[1:(n()-1)]),
-           freier_Speicher_T2040_mm_Vortag = c(NA,freier_Speicher_T2040_mm[1:(n()-1)]),
-           freier_Speicher_T4060_mm_Vortag = c(NA,freier_Speicher_T4060_mm[1:(n()-1)])) 
+    
+    #Zielgroese: available water capacity (%nFK oder AWC) oder soil water content (mm)
+    mutate(SM0020 = T0020_nFK,
+           SM2040 = T2040_nFK,
+           SM4060 = T4060_nFK,
+           SM0020_d1 = T0020_nFK_Vortag,
+           SM2040_d1 = T2040_nFK_Vortag,
+           SM4060_d1 = T4060_nFK_Vortag)
 
-# slice(-1) #erste Zeile entfernt, da hier NA
+# mutate(SM0020 = T0020_mm,
+#        SM2040 = T2040_mm,
+#        SM4060 = T4060_mm,
+#        SM0020_d1 = T0020_mm_Vortag,
+#        SM2040_d1 = T2040_mm_Vortag,
+#        SM4060_d1 = T4060_mm_Vortag)
+
+plot_axis_titles <- "AWC (%)"
 ```
 \
 ### Wassereintrag aus P + Bewässerung berechnen. Benötigte Variablen selektieren.
 ```{r}
-target <- c("T0020_mm", "T2040_mm", "T4060_mm",
-            "T0020_mm_Vortag","tage_seit_aussaat", 
-            "bewaesserung_mm", "Tempsum", "Tmax_gradC", "Tmin_gradC", "Tmean_gradC", 
+target <- c("SM0020","SM2040","SM4060", #yyy
+            "SM0020_d1", "SM2040_d1", "SM4060_d1", #yyy previous day
+            "tage_seit_aussaat", 
+            "bewaesserung_mm", "niederschlag_mm", 
+            "Tempsum", "Tmax_gradC", "Tmin_gradC", "Tmean_gradC", 
             "relLuftfeuchte_mean_prozent", "relLuftfeuchte_min_prozent", 
-            "Gobsum", "globalstrahlung_Mj_m2", "niederschlag_mm", 
-            "windgeschwindigkeit_m_s", "FAO56_mm", 
-             
-            #            "T0020_Auswaschung_mm_Vortag", "T2040_Auswaschung_mm_Vortag", "T4060_Auswaschung_mm_Vortag",   
-            #            "freier_Speicher_T0020_mm_Vortag", "freier_Speicher_T2040_mm_Vortag", "freier_Speicher_T4060_mm_Vortag",
-            #"T0060_mm",
-            #"T0020_nFK_Vortag", "T2040_nFK_Vortag", "T4060_nFK_Vortag",
-            "T0020_mm_Vortag","T2040_mm_Vortag", "T4060_mm_Vortag"
+            "Gobsum", "globalstrahlung_Mj_m2", 
+            "windgeschwindigkeit_m_s"
 )
 
-input_df <- input_tabelle %>% #[1:100,] %>%
+input_df <- input_tabelle %>%
+    filter(satz_id!=5|variante_H2O!="Wfull_plus") %>% ############# Eine Variante herausnehmen!
     select(satz_id, variante_H2O,wiederholung, target) %>%
     rowwise() %>%
     mutate(wasser_input = sum(niederschlag_mm, bewaesserung_mm, na.rm = TRUE)) %>%
@@ -90,12 +94,12 @@ df_tmp <-  input_df %>% select(-wiederholung)
 input_df.scaled <- data.table::as.data.table(scale(df_tmp))
 rm(df_tmp)
 # # response var must be scaled to [0 < resp < 1]
-input_df.scaled$T0020_mm <- input_df$T0020_mm
-input_df.scaled$T2040_mm <- input_df$T2040_mm
-input_df.scaled$T4060_mm <- input_df$T4060_mm
+input_df.scaled$SM0020 <- input_df$SM0020
+input_df.scaled$SM2040 <- input_df$SM2040
+input_df.scaled$SM4060 <- input_df$SM4060
 
 input_df.scaled <- input_df.scaled %>%
-    mutate_at(c("T0020_mm", "T2040_mm", "T4060_mm"),
+    mutate_at(c("SM0020", "SM2040", "SM4060"),
               ~scale(., center = min(., na.rm = TRUE),
                      scale = max(., na.rm = TRUE) - min(., na.rm = TRUE)))
 
@@ -113,18 +117,19 @@ test <- input_df.scaled[-idx,]
 ### ANNI erstellen
 ## 1. Modell für 0-20cm Tiefe
 ```{r}
+#original: (paper)
 set.seed(1234)
-nn0020=map(1:20, 
-           ~neuralnet(T0020_mm ~ 
-                          tage_seit_aussaat+ 
+nn0020=map(1:20,
+           ~neuralnet(SM0020 ~
+                          tage_seit_aussaat+
                           #  Tempsum+
                           Tmax_gradC+
                           #  Tmin_gradC+
                           ##  Tmean_gradC+
                           wasser_input_Vortag+
-                          T0020_mm_Vortag+
-                          # T2040_mm_Vortag+
-                          # T4060_mm_Vortag+
+                          SM0020_d1+
+                          # SM2040_d1+
+                          # SM4060_d1+
                           ##  relLuftfeuchte_mean_prozent+
                           relLuftfeuchte_min_prozent+
                           Gobsum +
@@ -140,16 +145,16 @@ nn0020=map(1:20,
 ## gesamtes Modell für alle Schichten:
 ```{r}
 # set.seed(1234)
-# nn=neuralnet(T0020_mm + T2040_mm ~ 
+# nn=neuralnet(SM0020 + SM2040 ~ 
 #                  tage_seit_aussaat+ 
 #                  Tempsum+
 #                  Tmax_gradC+
 #                  Tmin_gradC+
 #                  Tmean_gradC+
 #                  wasser_input_Vortag+
-#                  T0020_mm_Vortag+
-#                  T2040_mm_Vortag+
-#                  T4060_mm_Vortag+
+#                  SM0020_d1+
+#                  SM2040_d1+
+#                  SM4060_d1+
 #                  #  relLuftfeuchte_mean_prozent+
 #                  relLuftfeuchte_min_prozent+
 #                  Gobsum +
@@ -166,16 +171,16 @@ nn0020=map(1:20,
 set.seed(1234)
 
 nn2040=map(1:20, 
-           ~neuralnet(T2040_mm ~ 
+           ~neuralnet(SM2040 ~ 
                           tage_seit_aussaat+ 
                           Tempsum+ ###
                           ## Tmax_gradC+
                           ## Tmin_gradC+ ##
                           Tmean_gradC+ ##
                           wasser_input_Vortag+ ###
-                          T0020_mm_Vortag+
-                          T2040_mm_Vortag,
-                      #  T4060_mm_Vortag+ #
+                          SM0020_d1+
+                          SM2040_d1,
+                      #  SM4060_d1+ #
                       #  relLuftfeuchte_mean_prozent+ #
                       #  relLuftfeuchte_min_prozent+ #
                       #  Gobsum + #
@@ -193,19 +198,19 @@ nn2040=map(1:20,
 set.seed(1234)
 
 nn4060=map(1:20, 
-           ~neuralnet(T4060_mm ~ 
+           ~neuralnet(SM4060 ~ 
                           #        T4060_Auswaschung_mm_Vortag + ##Auswaschung eingefügt!!
                           #        T2040_Auswaschung_mm_Vortag + ##Auswaschung eingefügt!!
-                          #        freier_Speicher_T2040_mm_Vortag + 
+                          #        freier_Speicher_SM2040_d1 + 
                           tage_seit_aussaat+ 
                           Tempsum+ 
                           Tmax_gradC+
                           #        Tmin_gradC+ 
                           #        Tmean_gradC+ 
                           #        wasser_input_Vortag+ 
-                          #        T0020_mm_Vortag+
-                          T2040_mm_Vortag+
-                          T4060_mm_Vortag+ 
+                          #        SM0020_d1+
+                          SM2040_d1+
+                          SM4060_d1+ 
                           #       relLuftfeuchte_mean_prozent+ 
                           #relLuftfeuchte_min_prozent+ 
                           Gobsum,
@@ -219,17 +224,22 @@ nn4060=map(1:20,
 ```
 #Chose best repetition
 ```{r}
-# #nn_list <- nn0020 
-# #nn_list <- nn2040
-# nn_list <- nn4060
-# errors1 <- map_dbl(nn_list, ~.x$result.matrix[1,])
-# best_rep <-  which.min(errors1 )
-# cat("Best Repetition ist: #", best_rep)
-# nn <- nn_list[[best_rep]]
 
-nn0020_best <- nn_list_extract(nn_list = nn0020, target_y = "T0020_mm")
-nn2040_best <- nn_list_extract(nn_list = nn2040, target_y = "T2040_mm")
-nn4060_best <- nn_list_extract(nn_list = nn4060, target_y = "T4060_mm")
+nn_list_extract <- function(nn_list){
+    # #nn_list <- nn0020 
+    # #nn_list <- nn2040
+    # nn_list <- nn4060
+    errors1 <- map_dbl(nn_list, ~.x$result.matrix[1,])
+    best_rep <-  which.min(errors1)
+    #cat("Best Repetition ist: #", best_rep)
+    nn <- nn_list[[best_rep]]
+    list(nn=nn)
+}
+
+
+nn0020_best <- nn_list_extract(nn_list = nn0020)#, target_y = "SM0020")
+nn2040_best <- nn_list_extract(nn_list = nn2040)#, target_y = "SM2040")
+nn4060_best <- nn_list_extract(nn_list = nn4060)#, target_y = "SM4060")
 
 ```
 
@@ -290,9 +300,9 @@ olden_90_4060 <-  olden_90_percentile(all_olden_df = importance_4060)
 ```{r}
 labels1 <- c("Gobsum" = "Cum. \nirradiance",
              "relLuftfeuchte_min_prozent" = "Rel. \nhumidity",
-             "T0020_mm_Vortag" = "SM 0-20cm \n(d-1)",
-             "T2040_mm_Vortag" = "SM 20-40cm \n(d-1)",
-             "T4060_mm_Vortag" = "SM 40-60cm \n(d-1)",
+             "SM0020_d1" = "SM 0-20cm \n(d-1)",
+             "SM2040_d1" = "SM 20-40cm \n(d-1)",
+             "SM4060_d1" = "SM 40-60cm \n(d-1)",
              "Tempsum" = "Cum. \ntemp",
              "tage_seit_aussaat" = "DAS",
              "Tmax_gradC" = "Temp \nmax",
@@ -324,7 +334,7 @@ plots_olden
 #                           ymax = upper), width = 0.2, col = "black"))
 ```
 
-```{r}
+```{r, fig.width=6, fig.height=10}
 p_olden_combined <- ggpubr::ggarrange(plotlist = plots_olden, ncol = 1, 
                                       align = "hv", labels = "auto")
 # ggsave(plot = p_olden_combined, filename = "../graphics/Olden_combined.png", 
@@ -335,31 +345,89 @@ p_olden_combined <- ggpubr::ggarrange(plotlist = plots_olden, ncol = 1,
 
 #Olden einzeln erstellen:
 ```{r, eval=FALSE}
-#p1 <- NeuralNetTools::garson(nn) 
-p2 <- NeuralNetTools::olden(nn)
-## Beu Multi-Outpu-Data:
-#p2 <- NeuralNetTools::olden(nn, "T2040_mm")
-# NeuralNetTools::olden(nn, bar_plot = FALSE) #for values
-#p1.2 <- p1 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
-p2.2 <- p2 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
-p2.2
+# #p1 <- NeuralNetTools::garson(nn) 
+# p2 <- NeuralNetTools::olden(nn)
+# ## Beu Multi-Outpu-Data:
+# #p2 <- NeuralNetTools::olden(nn, "SM2040")
+# # NeuralNetTools::olden(nn, bar_plot = FALSE) #for values
+# #p1.2 <- p1 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+# p2.2 <- p2 + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+# p2.2
 ```
 NeuralNetTools::olden(nn) zeigt auch Vorzeichen: Einige Parameter sind kontraproduktiv für das Neuronale Netzwerk. Sie wurden daher in einem weiteren Schritt entfernt.
 https://www.jstatsoft.org/article/view/v085i11
 
 
+#Tabelle "actual and predicted values" df1 an nn_nbest_list anfügen
+```{r}
+
+df_act_pred <- function(nn, target_y, test_data, input_raw, input_scaled){
+    y_raw <- input_raw %>% pull(target_y)
+    maxy <-max(y_raw)
+    miny <-min(y_raw)
+    
+    #Nur Test-Daten
+    # Predict <- compute(nn$nn,test_data)
+    # Predict_ <- Predict$net.result*(maxy-miny)+miny
+    # test.r <- (test_data %>% pull(target_y))*(maxy-miny)+ miny
+    # MSE.nn <- sum((test.r - Predict_)^2, na.rm = TRUE)/nrow(test_data)
+    # RMSE.nn <- sqrt(MSE.nn)
+    
+    #Alle Daten
+    predict_all <- compute(nn$nn, input_scaled)
+    predict_all_net <- predict_all$net.result*(maxy-miny)+miny
+    test.r <- (input_scaled %>% pull(target_y))*(maxy-miny)+ miny
+    MSE.nn <- sum((test.r - predict_all_net)^2, na.rm = TRUE)/nrow(test_data)
+    RMSE.nn <- sqrt(MSE.nn)
+    
+    #Gemessene und ANN-berechnete Werte in eine Tabelle eintragen
+    df1 <- as.data.table(data.frame(actual_value = y_raw, 
+                                    predicted_value = predict_all_net,
+                                    input = "alle_Daten")) %>% bind_cols(idx_saetze)
+    
+    #Modellguete R2:
+    r2 = summary(lm(predicted_value ~actual_value, data = df1))$adj.r.squared
+    #return(df1)
+    output <- list(df1=df1, mse=MSE.nn, rmse = RMSE.nn, r2=r2)
+    return(output)
+}
+
+### Beispiel-Input:
+# nn = nn0020_best
+# target_y <- "SM4060"
+# test_data <- test
+# input_raw <- input_df
+# input_scaled <- input_df.scaled
+
+### erstelle Daten löschen (Workspace aufräumen)'
+#rm(nn, target_y, test_data, input_raw, input_scaled, Predict, y_raw, maxy, miny, Predict_, test.r, MSE.nn, predict_all,predict_all_net, df1 )
+
+tmp1 <- df_act_pred( nn = nn0020_best, target_y = "SM0020", test_data = test, 
+                     input_raw = input_df, input_scaled = input_df.scaled)
+tmp2 <- df_act_pred( nn = nn2040_best, target_y = "SM2040", test_data = test, 
+                     input_raw = input_df, input_scaled = input_df.scaled)
+tmp3 <- df_act_pred( nn = nn4060_best, target_y = "SM4060", test_data = test, 
+                     input_raw = input_df, input_scaled = input_df.scaled)
+
+
+nn0020_best[c("df1", "mse", "rmse", "r2")] <- tmp1
+nn2040_best[c("df1", "mse", "rmse", "r2")] <- tmp2
+nn4060_best[c("df1", "mse", "rmse", "r2")] <- tmp3
+
+rm(tmp1, tmp2, tmp3)
+```
+
 
 
 ```{r}
 plot_measured_predicted <- function(data){
+    
     p1 <- ggplot(data, aes(actual_value, predicted_value,
                            color=as.factor(satz_id))) + 
         geom_point() + 
         geom_abline(slope = 1, intercept = 0, color = "red")+
-        #ylab("ANN predicted AWC (%)") + xlab("actual AWC (%)") + 
-        ylab("ANN predicted soil water content (mm)") + 
-        xlab("Measured soil water content (mm)") + 
-        # facet_grid(.~input) + 
+        ylab(paste("ANN predicted", plot_axis_titles)) +
+        xlab(paste("Actual", plot_axis_titles)) +
         theme_bw() + 
         coord_fixed() + 
         theme(panel.grid = element_blank(),
@@ -387,23 +455,40 @@ p_all
 #        width = 5, height = 5, dpi = 300)
 ```
 
+
+#Plot: Measured vs predicted: lm mit Modellgüte r2, mse oder rmse
 ```{r}
-text_r2 <- data.frame(BodenTiefe = c("S0020_cm", "S2040_cm", "S4060_cm"),
-                      R2 = c(0.97, 0.97, 0.96),
-                      MSE = c(2.87, 1.05,0.34)) %>%
-    mutate(R2_label =  paste0("R2 = ", R2),
-           MSE_label = paste0("MSE = ", MSE)
-    ) 
+model_performance_labels <- map_df(list(S0020_cm = nn0020_best, 
+                                        S2040_cm = nn2040_best, 
+                                        S4060_cm = nn4060_best), 
+                                   ~data.frame(.x[c("mse", "rmse", "r2")]), .id = "BodenTiefe") %>% 
+    mutate(R2_label =  paste0("R2 = ", round(r2,2)),
+           MSE_label = paste0("MSE = ", round(mse, 2)),
+           RMSE_label = paste0("RMSE = ", round(rmse, 2))
+    )
+
+#Manuell aus Ergebnis ausgelesen:
+# text_r2 <- data.frame(BodenTiefe = c("S0020_cm", "S2040_cm", "S4060_cm"),
+#                       R2 = c(0.97, 0.97, 0.96),
+#                       MSE = c(2.87, 1.05,0.34)) %>%
+#     mutate(R2_label =  paste0("R2 = ", R2),
+#            MSE_label = paste0("MSE = ", MSE)
+#     ) 
+
+#Plot erstellen
 p_lm_2 <- ggplot(all_predicted, aes(actual_value, predicted_value)) + 
     geom_point() + 
     geom_abline(slope = 1, intercept = 0, color = "grey70")+
     geom_smooth(method = "lm", col="red", linetype = 1) +
     facet_grid(BodenTiefe~.) +     
-    ylab("ANN predicted soil water content (mm)") + 
-    xlab("Measured soil water content (mm)") + 
-   # geom_text(data = text_r2, aes(x=15, y = 40, label = R2_label, parse = TRUE), size = 3, hjust = 0) + 
-    ggpubr::stat_regline_equation(label.y = 41, aes(label = ..rr.label..), size = 3) +
-    geom_text(data = text_r2, aes(x=15, y = 35.5, label = MSE_label), size = 3, hjust = 0) + 
+    ylab(paste("ANN predicted", plot_axis_titles)) +
+    xlab(paste("Measured", plot_axis_titles)) + 
+    
+    #Modell-Guete Werte:
+    ggpubr::stat_regline_equation(label.y = 120, aes(label = ..rr.label..), size = 3) + #r2-label
+    #geom_text(data = model_performance_labels, aes(x=25, y = 120, label = R2_label, parse = TRUE), size = 3, hjust = 0) + 
+    geom_text(data = model_performance_labels, aes(x=25, y = 100, label = RMSE_label), size = 3, hjust = 0) + 
+    
     theme_bw() + 
     coord_fixed() + 
     theme(panel.grid = element_blank())
@@ -422,48 +507,58 @@ add_DAS_to_output_df <- function(data){
 
 all_df1 <- map_df(list(S0020_cm = nn0020_best, S2040_cm = nn2040_best, S4060_cm = nn4060_best),
                   ~add_DAS_to_output_df(data = .x[["df1"]]), .id = "BodenTiefe")
-
-#df1_melted...
-# input_df[idx,"tage_seit_aussaat"]
-# input_df[-idx,"tage_seit_aussaat"]
-```
-
-
-```{r}
-# ggplot(nn0020_best$df1 %>% filter(satz_id == 4, variante_H2O == "Wfull_plus", wiederholung == "a"), 
-#        aes(tage_seit_aussaat)) + 
-#     geom_line(aes(y=actual_value, col = "actual_value")) + 
-#     geom_line(aes(y=predicted_value, col = "predicted_value"))
-
-# ggplot(df1 %>% filter(satz_id == 5, variante_H2O == "Wfull", wiederholung == "c"), 
-#        aes(tage_seit_aussaat)) + 
-#     geom_line(aes(y=actual_value, col = "actual_value")) + 
-#     geom_line(aes(y=predicted_value, col = "predicted_value"))
 ```
 
 
 
-
-
-```{r}
-p_vertical <- ggplot(all_df1 %>% filter(satz_id == 4, 
-                                        variante_H2O == "Wfull_plus", 
-                                        wiederholung == "a"), 
-                     aes(tage_seit_aussaat)) + 
-    geom_line(aes(y=actual_value, col = "actual_value")) + 
-    geom_line(aes(y=predicted_value, col = "predicted_value")) + 
-    geom_point(aes(y=actual_value, col = "actual_value")) + 
-    geom_point(aes(y=predicted_value, col = "predicted_value")) + 
-    facet_grid(BodenTiefe~.)+# scales = "free_y") +
-    scale_y_continuous(breaks = c(25,30,35,40)) + 
-    scale_color_manual("", values = c("actual_value" = "black",
-                                      "predicted_value" = "red"), 
-                       labels = c("actual_value" = "Measured", 
-                                  "predicted_value" = "Predicted")) +
-    xlab("Days after seeding") + ylab("Soil water content (mm)") + 
-    theme_bw()+
-    theme(panel.grid = element_blank(), legend.position = "bottom")
+```{r, fig.width=6, fig.height=6}
+p_vertical_func <- function(.satz_id, .variante_H2O, .wiederholung ){
+    p1 <- ggplot(all_df1 %>% filter(satz_id == .satz_id, #2021-S2
+                                    variante_H2O == .variante_H2O, 
+                                    wiederholung == .wiederholung), 
+                 aes(tage_seit_aussaat)) + 
+        geom_line(aes(y=actual_value, col = "actual_value")) + 
+        geom_line(aes(y=predicted_value, col = "predicted_value")) + 
+        geom_point(aes(y=actual_value, col = "actual_value")) + 
+        geom_point(aes(y=predicted_value, col = "predicted_value")) + 
+        facet_grid(BodenTiefe~.)+
+        scale_color_manual("", values = c("actual_value" = "black",
+                                          "predicted_value" = "red"), 
+                           labels = c("actual_value" = "Measured", 
+                                      "predicted_value" = "Predicted")) +
+        xlab("Days after seeding") + ylab(plot_axis_titles) + 
+        theme_bw()+
+        theme(panel.grid = element_blank(), legend.position = "bottom")
+    p1
+}
+#Grafik aus Paper:
+p_vertical <- p_vertical_func(.satz_id =4, #2021-S2,
+                              .variante_H2O = "Wfull_plus", 
+                              .wiederholung = "a")
 p_vertical
+```
+```{r}
+#reduzierte Variante!
+p_vertical_func(.satz_id =4, #2021-S2,
+                .variante_H2O = "Wred", 
+                .wiederholung = "a")
+
+p_vertical_func(.satz_id =4, #2021-S2,
+                .variante_H2O = "Wfull", 
+                .wiederholung = "a")
+
+p_vertical_func(.satz_id =5, #2021-S2,
+                .variante_H2O = "Wfull", 
+                .wiederholung = "d")
+```
+```{r}
+#aben <- expand.grid(wiederholung = letters[1:4], variante_H2O = c("Wred", "Wful", "Wfull_plus"), satz_id = 2:5)
+df_eingaben <- all_df1 %>% group_by(satz_id, variante_H2O, wiederholung) %>% summarise(n = nrow(satz_id))
+
+map(1:nrow(df_eingaben), 
+    ~p_vertical_func(.satz_id = df_eingaben$satz_id[.x], 
+                     .variante_H2O = df_eingaben$variante_H2O[.x], 
+                     .wiederholung = df_eingaben$wiederholung[.x]))
 ```
 
 
@@ -480,8 +575,7 @@ plot_combined <- ggpubr::ggarrange(plotlist = list(p_vertical,p_lm_2),
 plot_combined
 ```
 ```{r}
-# ggsave(plot = plot_combined, "../graphics/ANNI_actual_predicted_plot_combined2.png", 
-#        device = "png", width = 8, height = 5, dpi = 300)
+#ggsave(plot = plot_combined, "../graphics/ANNI_actual_predicted_plot_combined_20220804_b.png",device = "png", width = 8, height = 5, dpi = 600)
 ```
 
 
@@ -489,6 +583,61 @@ plot_combined
 
 
 
+
+
+
+
+#Auswertung für Vortrag:
+
+
+### Änderung der nFK pro Tag
+# Hisotgram
+```{r}
+nfk_change <- all_df1 %>% group_by(satz_id, variante_H2O, wiederholung, BodenTiefe) %>% 
+    transmute(nFK_change_1d = c(NA, diff(actual_value)),
+              tage_seit_aussaat = tage_seit_aussaat,
+              BodenTiefe=BodenTiefe)
+
+
+ggplot(nfk_change %>% filter(nFK_change_1d <0 & tage_seit_aussaat > 20), aes(x = nFK_change_1d, fill = satz_id)) + 
+    geom_histogram() + 
+    facet_grid(BodenTiefe~variante_H2O, scales = "free_y")
+```
+#Nach Datum > 20 DAS
+```{r}
+ggplot(nfk_change %>% filter(tage_seit_aussaat > 20), aes(x = tage_seit_aussaat, y = nFK_change_1d, color = as.factor(satz_id))) + 
+    stat_summary(geom = "line", fun = "mean") + 
+    #geom_line() + 
+    facet_grid(BodenTiefe~variante_H2O)
+```
+
+
+```{r}
+ggplot(all_df1 %>% filter(actual_value < 70), 
+       aes(x = actual_value, y = predicted_value, color = as.factor(satz_id), shape = wiederholung)) + 
+        geom_abline(slope = 1, intercept = 0) + 
+    stat_summary(geom = "point", fun = "mean") + 
+    #geom_line() + 
+        ggpubr::stat_regline_equation(label.y = 65, aes(label = ..rr.label..), size = 3) + #r2-label
+    facet_grid(BodenTiefe~variante_H2O) + 
+    scale_y_continuous(limits = c(50,70)) +  scale_x_continuous(limits = c(50,70))+
+    theme_bw()+
+    theme(panel.grid = element_blank())
+
+```
+
+
+
+```{r}
+ggplot(all_df1 %>% filter(actual_value < 70), 
+       aes(x = actual_value, y = predicted_value)) + 
+        geom_abline(slope = 1, intercept = 0) + 
+    stat_summary(geom = "point", fun = "mean") + 
+        ggpubr::stat_regline_equation(label.y = 65, aes(label = ..rr.label..), size = 3) + #r2-label
+    scale_y_continuous(limits = c(50,70)) +  scale_x_continuous(limits = c(50,70))+
+    theme_bw()+
+    theme(panel.grid = element_blank())
+```
 
 
 
