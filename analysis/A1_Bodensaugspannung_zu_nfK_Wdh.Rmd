@@ -46,20 +46,23 @@ pf_max <- 4.2
 hPa_min <- 10^pf_min
 hPa_max <- 10^pf_max
 # Vol% Wasser bei 100% nFK für drei Bodentiefen:
-T0020 <- 49.3
-T4060 <- 46.1
+T0020 <- 49.3*(2/3) #20cm statt 30
+T4060 <- 46.1*(2/3) #20cm statt 30
 T2040 <- T0020 - (T0020 - T4060) / 2
 ```
 
 ### Tensiometer-Daten, Wetter und Bewasserung aus SQLite-Datenbank lesen.
 ```{r}
 # Verbindung zur Datenbanl herstellen:
-path1 <- ifelse(Sys.info()["nodename"] == "Samanthas-MacBook-Pro.local",
-                "../../Github_GeoSenSys/GeoSenSys2020/", "../../GeoSenSys2020/"
-)  
-db <- paste0(path1, "Data_2020/HGU_GeoSenSys_V3_6.db") # DB in other R-Project
-
+path0 <- "GeoSenSys2020/Data_2020/Database_Protokolle/Database_CSV_Tabellen_HGU/HGU_GeoSenSys_V3_6.db"
+# Verbindung zur Datenbanl herstellen:
+path1 <- ifelse(Sys.info()["user"] == "samantha_machgu",
+                "~/Documents/Mac_HGU_Github/", 
+                "../../"
+)
+db <- paste0(path1, path0) # DB in other R-Project
 db1 <- dbConnect(RSQLite::SQLite(), db)
+
 
 # Query fuer Tensiometer-Datensatz
 query <- "SELECT
@@ -290,7 +293,7 @@ source("../scripts/nfk_plot_functions.R")
 ```
 
 
-```{r}
+```{r, eval=FALSE, message=FALSE, warning=FALSE}
 #Beispiel:
 #px <- 
 plot_nfk(satz_nr = 6, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE, grafik = NULL) #grafik = "smooth")
@@ -309,41 +312,63 @@ plot_nfk(satz_nr = 6, subtitle = "2021, Satz 1, Feld 6, Variante 'Wred'",
 grafik <- NULL
 ```
 
-```{r message=FALSE, eval=FALSE}
+```{r message=FALSE, eval=FALSE, warning=FALSE}
 p2 <- plot_nfk(satz_nr = 2, subtitle = "2020, Satz 2, Feld 4a (*Paper)", wdh = FALSE, grafik = grafik)
 p3 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6", wdh = FALSE, grafik = grafik)
 p4 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b", wdh = FALSE, grafik = grafik)
 p5 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE, grafik = grafik)
-p6 <- plot_nfk(satz_nr = 6, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE, grafik = grafik) 
-p2; p3; p4; p5; p6
+p6 <- plot_nfk(satz_nr = 6, subtitle = "2022, Satz 1, Feld 4a", wdh = FALSE, grafik = grafik) 
+p7 <- plot_nfk(satz_nr = 7, subtitle = "2023, Satz 2, Feld 4b", wdh = FALSE, grafik = grafik) 
+p8 <- plot_nfk(satz_nr = 8, subtitle = "2023, Satz 3, Feld 4a", wdh = FALSE, grafik = grafik) 
+
+p2; p3; p4; p5; p6; p7; p8
 ```
 
 #Grafik speichern
 ```{r message=FALSE, eval=FALSE}
 # file_list <- list(
-#     #file1 <- #keine Tensiometer-Daten fuer Satz 1
-#     file2 = "../graphics/X20cm_Schritte/nFK_2020_Satz2.png",
-#     file3 = "../graphics/X20cm_Schritte/nFK_2021_Satz1.png",
-#     file4 = "../graphics/X20cm_Schritte/nFK_2021_Satz2.png",
-#     file5 = "../graphics/X20cm_Schritte/nFK_2021_Satz3.png")
+# #     #file1 <- #keine Tensiometer-Daten fuer Satz 1
+# #     file2 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2020_Satz2.png",
+# #     file3 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1.png",
+# #     file4 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2.png",
+# #     file5 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3.png",
+# #     file6 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1.png",
+# #     file7 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2.png",
+# #     file8 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3.png")
 # 
-# purrr::map2(file_list, list(p2, p3, p4, p5),
+# purrr::map2(file_list, list(#p6, p7, 
+#                             p8),
 #             ~ggsave(filename = .x, plot = .y, device = "png", width = 10, height = 6, dpi = 300)
 # )
 ```
 
+
 \
-<!-- \ -->
-<!-- ![test](../graphics/X20cm_Schritte/nFK_2020_Satz2.png) -->
-<!-- \ -->
-<!-- \ -->
-<!-- ![test](../graphics/X20cm_Schritte/nFK_2021_Satz1.png) -->
-<!-- \ -->
-<!-- \ -->
-<!-- ![test](../graphics/X20cm_Schritte/nFK_2021_Satz2.png) -->
-<!-- \ -->
-<!-- \ -->
-<!-- ![test](../graphics/X20cm_Schritte/nFK_2021_Satz3.png) -->
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2020_Satz2.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3.png)
+
+
+
+
+
 
 ### Plots pro Variante (== Vergleich der Wiederholungen):
 ```{r}
@@ -380,36 +405,105 @@ p9 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wred'",
                wdh = TRUE, variante = "Wred", grafik = grafik)
 ```
 
+```{r message=FALSE, eval=FALSE}
+#2022 Satz1
+p10 <- plot_nfk(satz_nr = 6, subtitle = "2022, Satz 1, Feld 4a, Variante 'Wfull_plus'", 
+               wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p11 <- plot_nfk(satz_nr = 6, subtitle = "2022, Satz 1, Feld 4a, Variante 'Wfull'", 
+               wdh = TRUE, variante = "Wfull", grafik = grafik)
+p12 <- plot_nfk(satz_nr = 6, subtitle = "2022, Satz 1, Feld 4aVariante 'Wred'", 
+               wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+```{r message=FALSE, eval=FALSE}
+#2022 Satz2
+p13 <- plot_nfk(satz_nr = 7, subtitle = "2022, Satz 2, Feld 4b, Variante 'Wfull_plus'", 
+               wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p14 <- plot_nfk(satz_nr = 7, subtitle = "2022, Satz 2, Feld 4b, Variante 'Wfull'", 
+               wdh = TRUE, variante = "Wfull", grafik = grafik)
+p15 <- plot_nfk(satz_nr = 7, subtitle = "2022, Satz 2, Feld 4b, Variante 'Wred'", 
+               wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+```{r message=FALSE, eval=FALSE}
+#2022 Satz3
+p16 <- plot_nfk(satz_nr = 8, subtitle = "2022, Satz 3, Feld 4a, Variante 'Wfull_plus'", 
+               wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p17 <- plot_nfk(satz_nr = 8, subtitle = "2022, Satz 3, Feld 4a, Variante 'Wfull'", 
+               wdh = TRUE, variante = "Wfull", grafik = grafik)
+p18 <- plot_nfk(satz_nr = 8, subtitle = "2022, Satz 3, Feld 4a, Variante 'Wred'", 
+               wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+
+
+
+
+
 #Grafiken der Wiederholung speichern
 ```{r message=FALSE, warning=FALSE, eval=FALSE}
+# Jahr <- "2022"
 # file_list <- list(
-#     file1 = "../graphics/X20cm_Schritte/nFK_2021_Satz1_Wfull_plus.png",
-#     file2 = "../graphics/X20cm_Schritte/nFK_2021_Satz1_Wfull.png",
-#     file3 = "../graphics/X20cm_Schritte/nFK_2021_Satz1_Wred.png",
-#     file4 = "../graphics/X20cm_Schritte/nFK_2021_Satz2_Wfull_plus.png",
-#     file5 = "../graphics/X20cm_Schritte/nFK_2021_Satz2_Wfull.png",
-#     file6 = "../graphics/X20cm_Schritte/nFK_2021_Satz2_Wred.png",
-#     file7 = "../graphics/X20cm_Schritte/nFK_2021_Satz3_Wfull_plus.png",
-#     file8 = "../graphics/X20cm_Schritte/nFK_2021_Satz3_Wfull.png",
-#     file9 = "../graphics/X20cm_Schritte/nFK_2021_Satz3_Wred.png")
+#     file1 = paste0("../graphics/nFK_plots/X20cm_Schritte/nFK_", Jahr, "_Satz1_Wfull_plus.png"),
+#     file2 = paste0("../graphics/nFK_plots/X20cm_Schritte/nFK_", Jahr, "_Satz1_Wfull.png"),
+#     file3 = paste0("../graphics/nFK_plots/X20cm_Schritte/nFK_", Jahr, "_Satz1_Wred.png"),
+#     file4 = paste0("../graphics/nFK_plots/X20cm_Schritte/nFK_", Jahr, "_Satz2_Wfull_plus.png"),
+#     file5 = paste0("../graphics/nFK_plots/X20cm_Schritte/nFK_", Jahr, "_Satz2_Wfull.png"),
+#     file6 = paste0("../graphics/nFK_plots/X20cm_Schritte/nFK_", Jahr, "_Satz2_Wred.png"),
+#     file7 = paste0("../graphics/nFK_plots/X20cm_Schritte/nFK_", Jahr, "_Satz3_Wfull_plus.png"),
+#     file8 = paste0("../graphics/nFK_plots/X20cm_Schritte/nFK_", Jahr, "_Satz3_Wfull.png"),
+#     file9 = paste0("../graphics/nFK_plots/X20cm_Schritte/nFK_", Jahr, "_Satz3_Wred.png"))
 # 
-# purrr::map2(file_list, list(p1,p2,p3,p4,p5,p6,p7,p8,p9),
+# purrr::map2(file_list, list(p10,p11,p12,p13,p14,p15,p16,p17,p18),
 #             ~ggsave(filename = .x, plot = .y, device = "png", width = 12, height = 6, dpi = 300)
 # )
 ```
 
 \
+## 2021, Satz1
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1_Wfull_plus.png)
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1_Wfull.png)
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1_Wred.png)
 
-<!-- ![aaa](../graphics/nFK_2021_Satz1_Wfull_plus.png) -->
-<!-- ![aaa](../graphics/nFK_2021_Satz1_Wfull.png) -->
-<!-- ![aaa](../graphics/nFK_2021_Satz1_Wred.png) -->
-<!-- ![aaa](../graphics/nFK_2021_Satz2_Wfull_plus.png) -->
-Wiederholung b, Bodentiefe: 40-60cm: Dies scheinen Fehlmessungen zu sein. Dafür spricht die hohe Stabw, sowie der Ausfall des Messgerätes nach Bodenfeuchtr-Werten < 140% nFK (maximale Werte aller Daten). Fuer eine weiter-Verwendung in ANNi wird diese Wiederholung aus dem Datensatz entfernt.
+## 2021, Satz 2
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2_Wfull_plus.png)
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2_Wfull.png)
+
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2_Wred.png)
+
+## 2021, Satz 3
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3_Wfull_plus.png)
+
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3_Wfull.png)
+
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3_Wred.png)
+## 2022, Satz1
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1_Wfull_plus.png)
+
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1_Wfull.png)
+
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1_Wred.png)
+
+## 2022, Satz2
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2_Wfull_plus.png)
+
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2_Wfull.png)
+
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2_Wred.png)
+
+## 2022, Satz3
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3_Wfull_plus.png)
+
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3_Wfull.png)
+
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3_Wred.png)
+
+2021, Wfull_plus, Wiederholung b, Bodentiefe: 40-60cm: Dies scheinen Fehlmessungen zu sein. Dafür spricht die hohe Stabw, sowie der Ausfall des Messgerätes nach Bodenfeuchtr-Werten < 140% nFK (maximale Werte aller Daten). Fuer eine weiter-Verwendung in ANNi wird diese Wiederholung aus dem Datensatz entfernt.
 
 #Unplausible Tensiometer-Daten entfernen:
 ```{r}
 tensio <- tensio %>%
-    filter(satz_id !=4 | wiederholung != "b")
+    filter(satz_id !=4 | wiederholung != "b" | variante_H2O != "Wfull_plus")
 ```
 
 
@@ -425,13 +519,13 @@ tensio <- tensio %>%
 
 #nFK-Tabelle speichern
 ```{r}
-# file1 <- "../data/derived_data/nfK_2020_2021_20220311.csv"
+# file1 <- "../data/derived_data/nfK_2020_2022_20220805.csv"
 # data.table::fwrite(x = tensio,file = file1, sep = ";", dec = ".")
 ```
 
 #Bewässerung-Tabelle speichern
 ```{r}
-# file1 <- "../data/derived_data/bewaesserung_2020_2021_20220311.csv"
+# file1 <- "../data/derived_data/bewaesserung_2020_2022_20220805.csv"
 # data.table::fwrite(x = bewaesserung,file = file1, sep = ";", dec = ".")
 ```
 
