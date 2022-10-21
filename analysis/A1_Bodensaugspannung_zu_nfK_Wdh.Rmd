@@ -191,23 +191,6 @@ tensio <- tensio %>% # as_tibble() %>%
     mutate_if(is.numeric, ~ round(., 2))
 ```
 
-
-### Tabelle formatieren für ggplot
-```{r}
-tensio_melted <- tidyr::pivot_longer(tensio %>%
-                                         select(c(
-                                             "satz_id", "variante_H2O","wiederholung", 
-                                             "zeit_messung", "tage_seit_aussaat",
-                                             "T0020_nFK", "T2040_nFK", "T4060_nFK"
-                                         )),
-                                     cols = c("T0020_nFK", "T2040_nFK", "T4060_nFK"),
-                                     names_to = "Bodentiefe",
-                                     values_to = "nFK_prozent"
-) %>%
-    mutate(Bodentiefe = substr(Bodentiefe, 4, 5) %>% as.numeric()) %>%
-    mutate(kategorie = factor("nFK", levels = c("wasserinput", "nFK")))
-```
-
 #Tensio bei 0cm erweitern
 ```{r}
 # tensio0 <- tensio_melted %>%
@@ -218,6 +201,31 @@ tensio_melted <- tidyr::pivot_longer(tensio %>%
 # 
 # rm(tensio0)
 ```
+
+
+
+### Tabelle formatieren für ggplot
+```{r}
+tensio_melted <- tidyr::pivot_longer(tensio,# %>%
+                                            # select(any_of(
+                                            #     c("satz_id", "variante_H2O", 
+                                            #       "wiederholung", "zeit_messung",
+                                            #       "tage_seit_aussaat")), 
+                                            #     contains("nFK")
+                                            #     ),
+                                     cols = contains("nFK"),
+                                     names_to = "Bodentiefe",
+                                     values_to = "nFK_prozent"
+) %>%
+    mutate(Bodentiefe = substr(Bodentiefe, 7,8) %>% as.numeric()) %>%
+   # mutate_at("Bodentiefe", ~ifelse(max(diff(.)) == 10, .+10,.)) %>%
+    mutate(kategorie = factor("nFK", levels = c("wasserinput", "nFK")))
+    
+```
+
+
+
+
 
 
 ### Wetter- und Bewässerungsdaten formatieren und zusammenführen
@@ -516,10 +524,27 @@ tensio <- tensio %>%
 
 
 
+# Auf 10-cm Schritte anpassen (Übertragbarkeit zu N-Düngemodell des IGZ)
+```{r}
+tensio <- 
+    tensio %>% 
+    ungroup %>%
+  mutate(gradient1 = (T0020_nFK-T2040_nFK)/3,
+         nFK_0010 = T0020_nFK + gradient1,
+         nFK_1020 = T0020_nFK - gradient1,
+         nFK_2030 = T2040_nFK + gradient1,
+         nFK_3040 = T2040_nFK - gradient1,
+         gradient2 = (T2040_nFK-T4060_nFK)/3,
+         nFK_4050 = T4060_nFK + gradient2,
+         nFK_5060 = T4060_nFK - gradient2)  %>%
+         #nFK_3060 = (nFK_3040 + nFK_4050 + nFK_5060)/3)
+  mutate_if(is.numeric, ~round(., 2)) %>%
+    select(any_of(c("satz_id", "variante_H2O", "wiederholung", "zeit_messung","tage_seit_aussaat")), contains("nFK_"))
 
+```
 #nFK-Tabelle speichern
 ```{r}
-# file1 <- "../data/derived_data/nfK_2020_2022_20220805.csv"
+# file1 <- "../data/derived_data/nfK_2020_2022_20220805_10cm_Schritte.csv"
 # data.table::fwrite(x = tensio,file = file1, sep = ";", dec = ".")
 ```
 
