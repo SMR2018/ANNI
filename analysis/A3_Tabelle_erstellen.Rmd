@@ -205,7 +205,8 @@ input_tabelle <- input_tabelle %>%
 input_tabelle <- 
     input_tabelle  %>%
     select(-niederschlag_mm, -bewaesserung_mm, -wasser_input,-wiederholung, -satz_id, 
-           -variante_H2O, -zeit_messung, -wetter_id) %>%
+           -variante_H2O, -zeit_messung, -wetter_id, -FAO56_mm_sum, -par_Wh_m2) %>%
+    #par_Wh_m2 raus, da bei vielen Stationen nicht enthalten
     select(contains("nFK"), !contains("nFK")) %>%
     tidyr::drop_na()
 ```
