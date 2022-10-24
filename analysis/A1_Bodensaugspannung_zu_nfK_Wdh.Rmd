@@ -511,7 +511,8 @@ p18 <- plot_nfk(satz_nr = 8, subtitle = "2022, Satz 3, Feld 4a, Variante 'Wred'"
 #Unplausible Tensiometer-Daten entfernen:
 ```{r}
 tensio <- tensio %>%
-    filter(satz_id !=4 | wiederholung != "b" | variante_H2O != "Wfull_plus")
+    filter(satz_id !=4 | wiederholung != "b" | variante_H2O != "Wfull_plus")# %>%
+    #filter(satz_id !=7 | !wiederholung %in% c("b", "c") | variante_H2O != "Wfull_plus")
 ```
 
 
