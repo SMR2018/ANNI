@@ -163,7 +163,7 @@ isaria <- isaria %>%
 
 #Isaria: Interpolation zwischen den Messtagen:
 ```{r}
-input_plus_isaria <- input_tabelle %>% 
+input_tabelle <- input_tabelle %>% 
     left_join(isaria, by = c("satz_id", "variante_H2O", "wiederholung", "zeit_messung" = "datum_messung")) %>% 
     group_by(satz_id, variante_H2O, wiederholung) %>%
     #Werte vor der ersten ISARIA-Messung werden gelöscht (keine Interpolation möglich)
@@ -180,6 +180,7 @@ input_plus_isaria <- input_tabelle %>%
 # stat_summary(fun = "mean", geom = "line")
 ```
 \
+
 
 ### nFK vom Vortag als Input ausweisen:
 ```{r}
