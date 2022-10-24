@@ -250,7 +250,7 @@ input_tabelle <- input_tabelle %>%
     mutate(wasser_input = sum(niederschlag_mm, bewaesserung_mm, na.rm = TRUE)) %>%
     ungroup %>%
     mutate(wasser_input_Vortag = c(NA,wasser_input[1:(n()-1)])) %>%
-    select(-niederschlag_mm, -bewaesserung_mm, -wasser_input,-wiederholung, -satz_id, -variante_H2O) %>%
+    select(-niederschlag_mm, -bewaesserung_mm, -wasser_input,-wiederholung, -satz_id, -variante_H2O, -zeit_messung) %>%
     tidyr::drop_na()
 ```
 
