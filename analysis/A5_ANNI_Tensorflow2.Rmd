@@ -24,7 +24,20 @@ data0 <- data.table::fread(
 
 ```
 \
-
+#Variablen auswählen:
+```{r}
+# data <- data0 %>%
+#     mutate(nFK_0010_change = nFK_0010_Vortag - nFK_0010,
+#            nFK_1020_change = nFK_1020_Vortag - nFK_1020,
+#            nFK_2030_change = nFK_2030_Vortag - nFK_2030,
+#            nFK_3040_change = nFK_3040_Vortag - nFK_3040,
+#            nFK_4050_change = nFK_4050_Vortag - nFK_4050,
+#            nFK_5060_change = nFK_5060_Vortag - nFK_5060, .before = "nFK_0010"
+#            ) %>%
+#     select(!any_of(c("nFK_0010", "nFK_1020", "nFK_2030", 
+#                      "nFK_3040", "nFK_4050", "nFK_5060"))) %>%
+#     select(!contains("sum"))
+```
 
 #ANNI: 
 #Matrix mit y (Bodenfeuchte pro Schicht: "nFK_0010" bis "nFK_5060)
@@ -39,7 +52,7 @@ ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
 
 #X definieren:
 #Ab Spalte 7
-idx_x <- 7:36
+idx_x <- 7:ncol(data)
 training <- data[ind==1,idx_x]
 test <- data[ind==2, idx_x]
 
@@ -58,12 +71,17 @@ str(testtarget)
 Später neue Daten anhand dieser Werte skalieren
 ```{r}
 m <- colMeans(training)
-s <- apply(training, 2, sd)
+s <- apply(training, 2, sd, na.rm=TRUE)
 s <- ifelse(s == 0, 1, s)
 training <- scale(training, center = m, scale = s)
 test <- scale(test, center = m, scale = s)
 ```
 
+#Training mit random NA values:
+```{r}
+# idx_na_ibi <- sample(1:nrow(training), size = 100, replace = FALSE)
+# training[idx_na_ibi,29:30] <- NA
+```
 
 #Keras initiieren: Input-Layer und Output-Layer definieren
 #A ) Sequential Model
@@ -132,7 +150,7 @@ earlystopping = callback_early_stopping(monitor = "loss",
 
 #Model trainieren:
 ```{r, message=FALSE}
-mymodel <- model %>%          
+model %>%          
     fit(training,trainingtarget, 
         epochs = 256,
         batch_size = 32,
@@ -159,8 +177,8 @@ y1 <- pred %>% as.data.frame() %>%
 
 result <- bind_cols(x1, y1) %>% 
     mutate_at("depth", 
-              ~factor(., labels = c("nFK_0010", "nFK_1020", "nFK_2030", 
-                                    "nFK_3040", "nFK_4050", "nFK_5060") ))
+              ~factor(., labels = c("nFK_0010_change", "nFK_1020_change", "nFK_2030_change", 
+                                    "nFK_3040_change", "nFK_4050_change", "nFK_5060_change") ))
 
 
 ggplot(result, aes(measured, predicted)) + 
@@ -171,7 +189,7 @@ ggplot(result, aes(measured, predicted)) +
     theme(panel.grid = element_blank())
 ```
 #Modell speichern:
-```{r}
+```{r, eval=FALSE}
 filepath_tf <- "../data/derived_data/Model1/ANNI_Tensorflow_20220819"
 keras::save_model_tf(model, filepath = filepath_tf, overwrite = FALSE)
 ```
