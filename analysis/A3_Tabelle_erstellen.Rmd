@@ -2,7 +2,6 @@
 title: "3. Tabelle erstellen für einen gewählten Satz Spinat"
 author: "Samantha Rubo"
 date: '2021-12-10'
-output: html_notebook
 ---
 
 ```{r message=FALSE, warning=FALSE, include=FALSE}
@@ -154,89 +153,70 @@ isaria <- dbGetQuery(db1, "SELECT
                      LEFT JOIN Spinat_Saetze ON Varianten.satz_id = Spinat_Saetze.satz_id;") %>%
     mutate_at("datum_messung", ~as_date(.))
 dbDisconnect(db1)
-```
 
-```{r}
-isaria <- isaria %>% group_by(satz_id, variante_H2O, wiederholung, datum_messung) %>%
-    summarise(across(ibi:irmi, ~mean(., na.rm=TRUE))) %>%
-    mutate_if(is.numeric, ~round(., 2)) %>%
-    ungroup()
+#Mittelwert pro Parzelle Messzeitpunkt
+isaria <- isaria %>% 
+    group_by(satz_id, variante_H2O, wiederholung, datum_messung) %>%
+    summarise(across(ibi:irmi, ~mean(., na.rm=TRUE)), .groups = "drop") %>%
+    mutate_if(is.numeric, ~round(., 2))
 ```
 
 #Isaria: Interpolation zwischen den Messtagen:
 ```{r}
-input_plus_isaria <- input_tabelle %>% 
+input_tabelle <- input_tabelle %>% 
     left_join(isaria, by = c("satz_id", "variante_H2O", "wiederholung", "zeit_messung" = "datum_messung")) %>% 
     group_by(satz_id, variante_H2O, wiederholung) %>%
+    #Werte vor der ersten ISARIA-Messung werden gelöscht (keine Interpolation möglich)
     mutate(delete_leading_NA = ifelse(is.na(ibi), 0, 1) %>% cumsum(.) %>% cumsum(.)) %>%
     filter(delete_leading_NA > 0) %>%    
     select(-delete_leading_NA) %>%
     filter(satz_id > 2) %>%
     group_by(satz_id, variante_H2O, wiederholung) %>%
-    mutate(across(ibi:irmi,~approx(x=., method = "linear", rule = 1, n = n())$y))
+    mutate(across(ibi:irmi,~approx(x=., method = "linear", rule = 1, n = n())$y)) %>%
+    ungroup
 
 # ggplot(input_plus_isaria, aes(tage_seit_aussaat, ibi, 
 #                               col = as.factor(satz_id), linetype = variante_H2O)) +
 # stat_summary(fun = "mean", geom = "line")
 ```
-
-
-
-
-
-<!-- #Tageslichtsunden summieren ab Auflaufen (statt Aussaat) -->
-<!-- ```{r} -->
-<!-- db1 <- dbConnect(RSQLite::SQLite(), db) -->
-<!-- das <- dbGetQuery(db1, "SELECT  -->
-<!-- satz_id, datum_aussaat, datum_ernte, datum_auflaufen_BBCH_09   -->
-<!--                   FROM Spinat_Saetze") -->
-
-<!-- das <- das %>% mutate_at(c("datum_aussaat","datum_ernte", "datum_auflaufen_BBCH_09"),  -->
-<!--                          ~as_date(.)) %>% -->
-<!--   mutate(das = datum_ernte - datum_aussaat, -->
-<!--          dae = datum_ernte - datum_auflaufen_BBCH_09)  -->
-
-<!-- dbDisconnect(db1) -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- wetter2 <- wetter %>%    -->
-<!--   left_join(das %>% select(satz_id, datum_aussaat, datum_auflaufen_BBCH_09),  -->
-<!--             by = "satz_id") %>% -->
-<!--   mutate(dae = (datum_wetter - datum_auflaufen_BBCH_09) %>% as.numeric, -->
-<!--          das = (datum_wetter - datum_aussaat) %>% as.numeric) %>% -->
-
-<!--   mutate(cumsum_direction = ifelse(dae < 0,"negative", "positive"))%>% -->
-<!--   group_by(satz_id, cumsum_direction) %>% -->
-<!--   arrange(abs(dae), .by_group = TRUE) %>% -->
-<!--   mutate(Tmean_th9_25_gradC_sum_dae = cumsum(Tmean_th9_25_gradC), -->
-<!--          tageslicht_h_th9_sum_dae = cumsum(tageslicht_h_th9), -->
-<!--          tageslicht_h_sum_dae = cumsum(tageslicht_h)) %>%  -->
-
-<!--   arrange(dae, .by_group = TRUE) %>% #sortierung wieder rückgängig machen -->
-
-
-<!--   mutate_at(c("Tmean_th9_25_gradC_sum_dae", "tageslicht_h_th9_sum_dae"),  -->
-<!--             ~ifelse(dae<0, -., .)) %>% -->
-<!--   mutate(correction_temp = abs(max(Tmean_th9_25_gradC_sum_dae)), -->
-<!--          correction_licht = abs(max(tageslicht_h_th9_sum_dae)), -->
-<!--          correction_licht2 = abs(max(tageslicht_h_sum_dae))) %>% -->
-
-<!--   group_by(satz_id) %>% -->
-<!--   mutate_at(c("Tmean_th9_25_gradC_sum_dae"), ~ifelse(dae<0, .+correction_temp, .)) %>% -->
-<!--   mutate_at(c("tageslicht_h_th9_sum_dae"), ~ifelse(dae<0, .+correction_licht, .)) %>% -->
-<!--   mutate_at(c("tageslicht_h_sum_dae"), ~ifelse(dae<0, .+correction_licht2, .)) %>% -->
-
-<!--   select(-cumsum_direction, -correction_temp, -correction_licht, -correction_licht2) -->
-
-<!-- ``` -->
-
 \
+
+
+### nFK vom Vortag als Input ausweisen:
+```{r}
+input_tabelle <- 
+    input_tabelle  %>%
+    mutate(across(c("nFK_0010","nFK_1020","nFK_2030","nFK_3040","nFK_4050","nFK_5060"), 
+                  ~c(NA,.[1:(n()-1)]) , 
+                  .names = "{.col}_Vortag")
+    )
+```
+\
+### Wassereintrag aus P + Bewässerung berechnen. 
+```{r}
+input_tabelle <- input_tabelle %>% 
+    rowwise() %>%
+    mutate(wasser_input = sum(niederschlag_mm, bewaesserung_mm, na.rm = TRUE)) %>%
+    ungroup %>%
+    mutate(wasser_input_Vortag = c(NA,wasser_input[1:(n()-1)]))
+```
+
+#Benötigte Variablen selektieren.
+```{r}
+input_tabelle <- 
+    input_tabelle  %>%
+    select(-niederschlag_mm, -bewaesserung_mm, -wasser_input,-wiederholung, -satz_id, 
+           -variante_H2O, -zeit_messung, -wetter_id, -FAO56_mm, -FAO56_mm_sum, -par_Wh_m2) %>%
+    #par_Wh_m2 raus, da bei vielen Stationen nicht enthalten
+    select(contains("nFK"), !contains("nFK")) %>%
+    tidyr::drop_na()
+```
+
 ### Tabelle speichern on Projekt-Ordner für Daten
 ```{r}
-write.table(x = input_tabelle,
-            file = "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
-            sep = ";",dec = ".", row.names = FALSE)
+# write.table(x = input_tabelle,
+#             file = "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
+#             sep = ";",dec = ".", row.names = FALSE)
 ```
 
 
