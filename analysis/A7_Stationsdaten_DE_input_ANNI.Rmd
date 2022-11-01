@@ -4,37 +4,369 @@ author: "Samantha Rubo"
 date: "2022-10-25"
 ---
 
-
 #Pakete laden:
-```{r}
+```{r, message=FALSE}
 library(data.table)
 library(rdwd) ## Paket fuer DWD-Daten-Import!
 library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(lubridate)
-#install.packages('RCurl')
+```
+
+# Welche Parameter werden benötigt?
+## Header (Parameter) für ANNI:
+```{r}
+parameter_anni <- fread(
+"../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv", 
+sep = ";", nrows = 1, header = FALSE) %>% t
+parameter_anni
+```
+# Bei DWD sind folgende Stations-Daten verfügbar:
+```{r}
+# PARAMETER # KUERZEL # ORDNER
+# Temperatur --> min, max, mean, threshold, sum # TMK, TXK, TNK # kl
+# rel. Luftfeuchte --> min, max, mean,# UPM: nur Tagesmittel# kl, moisture
+# Globalstrahlung --> sum1, sum2# # solar
+# Windgeschwindigkeit # FM# kl
+# Niederschlag# RSK # kl
+# Tageslichtstunden (berechnen) --> tag, threshold, sum # --- # ---
 ```
 
 
+Die Daten der nFK stammen vom DWD. 
+"Da die Messung der Bodenfeuchte sehr aufwendig und fehlerbehaftet ist, wird sie mittlerweile nicht mehr gemessen, sondern berechnet." (https://www.dwd.de/DE/leistungen/bodenfeuchte_dl/bodenfeuchtedl.html, 31.10.22)
+Die Bodenfeuchte ist verfügbar in 10-cm-Schritten bis 60 cm Tiefe unter Gras bei lehmigen Sand (leichter Boden) oder sandigem Lehm (schwerer Boden).
+(Wie weit zurück reichen die Daten?? Davon hängt ab, bis wann die Stationsdaten der anderen Parameter geladen werden)
 
-# Server ansprechen und Index der Daten erstellen (Bodenfeuchte):
+# Server ansprechen und Index der Bodenfeuchte-Daten erstellen:
 ```{r, rows.print = 25}
 dbase <- "ftp://opendata.dwd.de/climate_environment/CDC/derived_germany"
 soilIndex <- indexFTP(folder="soil/daily", base=dbase, dir=locdir())
 soilIndex <- createIndex(soilIndex, base=dbase, dir=locdir())
-#  "res" and "var" are inverted in the derived_germany folder!
+#"res" and "var" are inverted in the derived_germany folder!
 colnames(soilIndex)[1:2] <- c("var", "res")
-soilIndex 
+soilIndex
+#soilIndex %>% select(per, id) %>% filter(!is.na(id)) 
 ```
 
-#Daten laden:
+## "Stations_id" der Stationen mit Bodenfeuchte für "recent" und "historical" auslesen.
+```{r}
+id_nFK <- soilIndex %>% select(per, id) %>% 
+filter(!is.na(id)) %>%
+group_by(id) %>%
+summarise(nn = n()) %>% 
+filter(nn == 2) %>% pull(id)
+```
+
+# Welche Wetter-Daten sind verfügbar an den Stationen?
+
+## Meta-Index des DWD nutzen:
+```{r}
+meta1 <- rdwd:::metaIndex
+str(meta1)
+```
+
+## Welche Parameter sind generell verfügbar?
+```{r}
+meta1$var %>% unique()
+# wir brauchen "kl": "Klima". Aber welche Parameter sind an der jeweiligen Station gemessen?
+# zusätzlich "solar", da Globalstrahlung nicht in Klima-Daten vorhanden ist.
+```
+
+## Auswahl der Stationen in Abhängigkeit der größten gemeinsamen Schnittmenge an gemessenen Parametern
+```{r}
+#Auswahl für Globalstrahlung unter var = "solar":
+meta1 %>% filter(var == "solar") %>% 
+group_by(res, per) %>%
+summarise(n=n(), .groups = "drop")
+
+# 10_minutes-Resolution: 325 Stationen 
+# hourly:47 Stationen
+# daily46 Stationen
+# per = "recent" hat nur 10-minute resolution!! 
+# --> Diese 325 Stationen als Auswahl nehmen und selber Tages-Summen berechnen
+```
+## Auswahl für Klimadaten unter var = "kl":
+```{r}
+meta1 %>% filter(var == "kl") %>% 
+group_by(res, per) %>%
+summarise(n=n(), .groups = "drop")
+# daily resolution hat die meisten Einträge (#1346) 
+```
+## Auswahl für rel. Luftfeuchte unter var = "moisture": (für min und max-Berechnung)
+```{r}
+meta1 %>% filter(var == "moisture") %>% 
+group_by(res, per) %>%
+summarise(n=n(), .groups = "drop")
+# subdaily resolution (#1186) hat die meisten Einträge
+# hourly hat #712 einträge
+```
+## Auswahl für Windgeschwindigkeit unter var = "wind": (für min und max-Berechnung)
+```{r}
+meta1 %>% filter(var == "wind") %>% 
+group_by(res, per) %>%
+summarise(n=n(), .groups = "drop")
+# subdaily resolution (#1156) hat die meisten Einträge
+# hourly hat #525 einträge
+```
+## #Funktion zum auslesen der passenden Stations-IDs (für "recent" und "historical")
+```{r}
+pull_station_id <- function(.var, .res){
+    meta1 %>% 
+select(Stations_id, res, var, per) %>%
+filter(var == .var & res == .res) %>% 
+group_by(Stations_id, per) %>% 
+summarise(n =n(), .groups = "drop") %>%
+pivot_wider(id_cols = Stations_id, names_from = per, values_from = n) %>% 
+filter(if_any(c("recent", "historical"), ~!is.na(.))) %>% 
+pull(Stations_id) %>% unique
+}
+```
+
+```{r}
+# Stations-ID für Parameters auslesen
+id_globalstrahlung <- pull_station_id(.var = "solar", .res = "10_minutes") 
+id_klima <- pull_station_id(.var = "kl", .res = "daily") 
+id_moisture <- pull_station_id(.var = "moisture", .res = "subdaily") 
+id_wind <- pull_station_id(.var = "wind", .res = "subdaily") 
+```
+
+```{r}
+#Gemeinsame Schnittmenge der IDs filtern:
+id_complete <- data.frame(id = c(id_globalstrahlung, id_klima, id_moisture, id_wind)) %>%
+    group_by(id) %>% summarise(n=n()) %>% 
+    filter(n == 4) %>% pull(id)
+```
+
+
+<!-- ## "Stations_id" der Stationen mit Globalstrahlung für "recent" und "historical" auslesen. -->
+<!-- ```{r} -->
+<!--  id_globalstrahlung <-    meta1 %>% -->
+<!-- select(Stations_id, res, var, per) %>% -->
+<!-- filter(var == "solar" & res == "10_minutes") %>% -->
+<!-- group_by(Stations_id, per) %>% -->
+<!-- summarise(n =n(), .groups = "drop") %>% -->
+<!-- pivot_wider(id_cols = Stations_id, names_from = per, values_from = n) %>% -->
+<!-- filter(if_any(c("recent", "historical"), ~!is.na(.))) %>% -->
+<!-- pull(Stations_id) -->
+<!-- ``` -->
+
+<!-- ## "Stations_id" der Stationen mit Klimadaten auslesen (Subset von Stationen mit Globalstrahlung) -->
+<!-- ```{r} -->
+<!-- id_klima <- meta1 %>%  -->
+<!-- select(Stations_id, res, var, per) %>% -->
+<!-- filter(var == "kl" & res == "daily") %>%  -->
+<!-- group_by(Stations_id, per) %>%  -->
+<!-- summarise(n =n(), .groups = "drop") %>% -->
+<!-- pivot_wider(id_cols = Stations_id, names_from = per, values_from = n) %>%  -->
+<!-- filter(if_any(c("recent", "historical"), ~!is.na(.))) %>%  -->
+<!-- pull(Stations_id) -->
+
+<!-- #Subset beider Stations-Indices -->
+<!-- idx_select <- match(id_globalstrahlung, id_klima) -->
+<!-- id_complete <- id_klima[idx_select] -->
+<!-- ``` -->
+
+<!-- ## "Stations_id" der Stationen mit rel.Luftfeuchte auslesen (Subset von Stationen mit Globalstrahlung) -->
+<!-- ```{r} -->
+<!-- id_moisture <-  -->
+<!-- meta1 %>%  -->
+<!-- select(Stations_id, res, var, per) %>% -->
+<!-- filter(var == "moisture" & res == "subdaily") %>% #fuer min und max Berechnung -->
+<!-- group_by(Stations_id, per) %>%  -->
+<!-- summarise(n =n(), .groups = "drop") %>% -->
+<!-- pivot_wider(id_cols = Stations_id, names_from = per, values_from = n) %>%  -->
+<!-- filter(if_any(c("recent", "historical"), ~!is.na(.))) %>%  -->
+<!-- pull(Stations_id) -->
+
+<!-- #climate/hourly/moisture/recent/ -->
+<!-- #climate/hourly/moisture/historical/ -->
+
+<!-- #Subset beider Stations-Indices -->
+<!-- idx_select <- as.numeric(na.omit(match(id_complete, id_moisture))) -->
+<!-- id_complete <- id_moisture[idx_select] -->
+<!-- ``` -->
+
+<!-- ## "Stations_id" der Stationen mit rel.Luftfeuchte auslesen (Subset von Stationen mit Globalstrahlung) -->
+<!-- ```{r} -->
+<!-- id_wind <-  -->
+<!-- meta1 %>%  -->
+<!-- select(Stations_id, res, var, per) %>% -->
+<!-- filter(var == "wind" & res == "subdaily") %>% #in "kl" ist alles NA -->
+<!-- group_by(Stations_id, per) %>%  -->
+<!-- summarise(n =n(), .groups = "drop") %>% -->
+<!-- pivot_wider(id_cols = Stations_id, names_from = per, values_from = n) %>%  -->
+<!-- filter(if_any(c("recent", "historical"), ~!is.na(.))) %>%  -->
+<!-- pull(Stations_id) -->
+
+<!-- #climate/subdaily/wind/recent/ -->
+<!-- #climate/subdaily/wind/historical/ -->
+
+<!-- #Subset beider Stations-Indices -->
+<!-- idx_select <- as.numeric(na.omit(match(id_complete, id_wind))) -->
+<!-- id_complete <- id_wind[idx_select] -->
+<!-- ``` -->
+
+
+<!-- ## "Stations_id" der nFK-Daten auslesen: -->
+<!-- ```{r} -->
+<!-- idx_select <- as.numeric(na.omit(match(id_complete, id_nFK))) -->
+<!-- id_complete <- id_nFK[idx_select] -->
+<!-- ``` -->
+289 Stationen liefern alle Parameter zu heutigen und historischen Werten.
+
+## Verwendbare Wetterstationen plotten (Stations-Auswahl == alle Daten vorhanden)
+```{r}
+Stations_Auswahl <- meta1 %>% filter(Stations_id %in% id_complete) %>%
+select(Stations_id, Stationsname, geoBreite, geoLaenge) %>%
+filter(!duplicated(.)) %>%
+group_by(Stations_id, Stationsname) %>%
+summarise(across(c("geoBreite", "geoLaenge"), ~mean(.)), .groups = "drop")
+```
+
+### Deutschland-Grenzen laden:
+```{r}
+# #Daten laden:
+# germany <- geodata::gadm(country = "Germany", level = 0, path = tempdir(), resolution = 2)
+# library(raster)
+# #In SpatialPolygonsDataFrame konvertieren
+# germany_sp <- as(germany, "Spatial")
+# #als Shapefile speichern
+# rgdal::writeOGR(obj=germany_sp, dsn = "../data/derived_data/Germany_boundaries", layer = "Germany_shapefile",
+#driver="ESRI Shapefile") # this is in equal area projection
+# #Alle germany-Versionen aus Workspace entfernen
+# #rm(list = ls()[grepl(x = ls(), pattern = "germany")])
+# detach("package:raster", unload = TRUE)
+
+#Gespeichertes shapefile einlesen:
+germany_sp <- rgdal::readOGR(dsn = "../data/derived_data/Germany_boundaries", layer = "Germany_shapefile")
+```
+
+```{r, message=FALSE}
+ggplot() +
+geom_polygon(data = germany_sp,
+ aes(x = long, y = lat, group = group),
+ colour = "grey10", fill = "#fff7bc") +
+geom_point(data = Stations_Auswahl,
+ aes(x = geoLaenge, y = geoBreite),
+ alpha = .5, size = 1.5) +
+coord_map() +
+theme_bw() +
+xlab("Longitude") + ylab("Latitude") +
+labs(title = "DWD Weather Stations", subtitle = "inlcuding all parameters")
+```
+
+
+
+
+
+
+# Daten der Stationsauswahl laden:
+
+## Wetterdaten (unter Ordner "kl" = Klima) 
+Hier überspringen. Bereits einmal ausgeführt und Daten gespeichert.
+```{r eval=FALSE, include=TRUE}
+here::i_am(path = "analysis/A7_Stationsdaten_DE_input_ANNI.Rmd")
+
+#Select data from the DWD CDC FTP Server
+link <- selectDWD(id = Stations_Auswahl$Stations_id, 
+res="daily", var="kl", per="", current=FALSE, meta = FALSE)
+#per = "": beides
+link
+#var="kl" = Klima-Daten (alle gemessenen Parameter)
+
+#Download data from the DWD CDC FTP Server --> 150 MB. uncomment to load!
+# file <- dataDWD(url = link, read=FALSE, 
+# dir = here::here("data/raw_data/DWDdata"), 
+# quiet=TRUE, force=NA)
+
+#if file couldn't be downloaded, remove from list
+file <- file[file.exists(file)]
+#Process data from the DWD CDC FTP Server to a data.frame
+clim <- readDWD(file, varnames=TRUE,fread=TRUE) 
+#fread = FALSE for full Windows compatibility
+#str(clim)
+
+# In eine lange Tabelle umformen:
+clim_df <- bind_rows(clim)
+# Speichern der Wetterdaten als RDS
+saveRDS(object = clim_df, 
+file = "../data/derived_data/DWD_data/kl_Klima/kl_tagesmittel_290Stationen.rds")
+```
+
+```{r}
+#gespeicherte Klima-Daten einlesen
+clim_df <- readRDS(file = "../data/derived_data/DWD_data/kl_Klima/kl_tagesmittel_290Stationen.rds")
+str(clim_df)
+#parameter_anni
+```
+
+```{r}
+clim_filtered <- clim_df %>%
+select(
+# nFK_0010,                         # Alle nFK aus nFK-Tabelle
+# nFK_1020, 
+# nFK_2030, 
+# nFK_3040, 
+# nFK_4050, 
+# nFK_5060, 
+# nFK_0010_Vortag,
+# nFK_1020_Vortag,
+# nFK_2030_Vortag,
+# nFK_3040_Vortag,
+# nFK_4050_Vortag,
+# nFK_5060_Vortag,
+# tage_seit_aussaat,                # Mittelwert für Gras?
+Tmean_gradC = TMK.Lufttemperatur,
+# Tmean_th9_25_gradC,               #berechnen
+Tmin_gradC = TNK.Lufttemperatur_Min,
+Tmax_gradC =TXK.Lufttemperatur_Max,
+relLuftfeuchte_mean_prozent = UPM.Relative_Feuchte,
+# relLuftfeuchte_min_prozent,       #berechnen
+# relLuftfeuchte_max_prozent,       #berechnen
+# globalstrahlung_Wh_m2,            #in "solar" Ordner --> Tagessumme berechnen
+windgeschwindigkeit_m_s,
+# tageslicht_h,                     #berechnen
+# tageslicht_h_th9,                 #berechnen
+# Tmean_gradC_sum,                  #berechnen
+# Tmean_th9_25_gradC_sum,           #berechnen
+# globalstrahlung_Wh_m2_sum,        #berechnen
+niederschlag_mm_sum = RSK.Niederschlagshoehe, ##herausnehmen für ANNI?? 
+wasser_input_mm = RSK.Niederschlagshoehe#, ##stattdessen Parameter hinzugefügt für ANNI?? 
+# tageslicht_h_sum,                 #berechnen
+# tageslicht_h_th9_sum,             #berechnen
+# Ton_prozent,                      #aus nFK-Tabelle
+# Schluff_prozent,                  #aus nFK-Tabelle
+# Sand_prozent,                     #aus nFK-Tabelle
+# C_org_prozent,                    #aus nFK-Tabelle
+# ibi,                              #Mittelwert für Gras?
+# irmi,                             #Mittelwert für Gras?
+# wasser_input_Vortag,              #berechnen
+)
+```
+
+Info zum Niederschlag: "Das Zeitintervall der täglichen Niederschlagshöhe ist als 6 Uhr bis 6
+Uhr Folgetag definiert." (Quellen: https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/daily/kl/recent/BESCHREIBUNG_obsgermany_climate_daily_kl_recent_de.pdf)
+
+
+
+
+
+
+
+
+
+
+
+
+#Bodenfeuchte-Daten laden:
 Übersichtskarte der Stationen: https://opendata.dwd.de/climate_environment/CDC/help/stations_map_soil.png
 
 "historical": Tägliche Werte sei 1991-01-01 bis Ende letztes Jahr
 "recent": Tägliche Werte dieses Jahres
 ```{r}
-soil_link <- selectDWD(id = 1051, res="", var="", per="", base=dbase, findex=soilIndex)
+soil_link <- selectDWD(id = 2597, res="", var="", per="", base=dbase, findex=soilIndex)
 
 # download Daten
 soil_data <- dataDWD(soil_link, base=dbase, dir=locdir())
@@ -50,31 +382,31 @@ df_final <- bind_rows(soil_data)
 ```{r}
 #Daten umformen (in lange Tabelle)
 clim_melted <- tidyr::pivot_longer(df_final %>%
-                                       select(Datum,
-                                              BF10, BF20, BF30, BF40, BF50, BF60) %>%
-                                       filter(Datum > "2021-12-31"), 
-                                   cols = BF10:BF60, 
-                                   names_to = "Variable",
-                                   values_to = "value") %>%
-    mutate(Tiefe = substring(Variable, 3, nchar(Variable))) %>%
-    mutate_at("Tiefe", 
-              ~as.numeric(.)) %>%
-    mutate_at("Variable", 
-              ~factor(., levels = c("BF10", "BF20", "BF30", "BF40", "BF50", "BF60")))
+ select(Datum,
+BF10, BF20, BF30, BF40, BF50, BF60) %>%
+ filter(Datum > "2021-12-31"),
+ cols = BF10:BF60,
+ names_to = "Variable",
+ values_to = "value") %>%
+mutate(Tiefe = substring(Variable, 3, nchar(Variable))) %>%
+mutate_at("Tiefe",
+~as.numeric(.)) %>%
+mutate_at("Variable",
+~factor(., levels = c("BF10", "BF20", "BF30", "BF40", "BF50", "BF60")))
 
 
 #Plot:
 ggplot(clim_melted, aes(Datum, value, col=as.factor(Tiefe))) +
-    geom_rect(aes(xmin = as_date(-Inf), xmax = as_date(Inf), 
-                  ymin = 60, ymax = 90, fill = "Ausreichend"), color = NA)+
-    geom_rect(aes(xmin = as_date(-Inf), xmax = as_date(Inf), 
-                  ymin = 0, ymax = 60, fill = "Unterversorgt"), color = NA)+
-    geom_line()+
-    ylab("Nutzbare Feldkapazität (%)") + 
-    theme_bw() + 
-    theme(panel.grid = element_blank()) +
-    scale_fill_manual("Wasser-\nVersorgunszustand", 
-                      values = c("Ausreichend"="gray90", "Unterversorgt"="gray80"))
+geom_rect(aes(xmin = as_date(-Inf), xmax = as_date(Inf),
+ymin = 60, ymax = 90, fill = "Ausreichend"), color = NA)+
+geom_rect(aes(xmin = as_date(-Inf), xmax = as_date(Inf),
+ymin = 0, ymax = 60, fill = "Unterversorgt"), color = NA)+
+geom_line()+
+ylab("Nutzbare Feldkapazität (%)") +
+theme_bw() +
+theme(panel.grid = element_blank()) +
+scale_fill_manual("Wasser-\nVersorgunszustand",
+values = c("Ausreichend"="gray90", "Unterversorgt"="gray80"))
 
 ```
 #Daten als CSV speichern:
@@ -84,132 +416,6 @@ ggplot(clim_melted, aes(Datum, value, col=as.factor(Tiefe))) +
 
 
 
-# Welche Daten sind verfügbar an den Stationen?
-## Meta-Index des DWD nutzen:
-```{r}
-meta1 <- rdwd:::metaIndex
-str(meta1)
-```
-## Welche Parameter sind generell verfügbar?
-```{r}
-meta1$var %>% unique()
-#wir brauchen "kl": "Klima". Aber welche Parameter sind an der jeweiligen Station gemessen?
-# zusätzlich "solar", da Globalstrahlung nicht in Klima-Daten vorhanden ist.
-```
-```{r}
-meta1 %>% filter(var == "solar") %>% 
-        filter(per == "recent") %>%
-    group_by(Stationsname, res) %>%
-    summarise(n=n(), .groups = "drop") %>%
-    tidyr::pivot_wider(id_cols = Stationsname, names_from = res, values_from = n) %>%
-    ungroup() %>%
-    filter(!is.na(!!sym("hourly")))
-
-#10_minutes-Resolution: 325 Stationen
-#hourly:                47 Stationen
-#daily                  46 Stationen
-
-#Recent hat nur 10-minute resolution!!
-
-Auswahl_Stationen_idx <- meta1 %>% 
-    filter(res == "daily") %>%
-    filter(per == "recent") %>%
-    mutate(x_vorhanden = ifelse(var %in% c("kl", "solar"),1,0)) %>%
-    group_by(Stations_id) %>%
-    summarise(wieviele_vorhanden = sum(x_vorhanden)) %>%
-    filter(wieviele_vorhanden == 2) %>% 
-    pull(Stations_id)
-
-meta1 %>% 
-    filter(res == "hourly") %>%
-    filter(var == "moisture") %>%
-    group_by(Stations_id) %>%
-    pull(Stations_id) %>% length()
-
-#
-#climate/hourly/moisture/recent/
-#climate/hourly/moisture/historical/
-
-length(Auswahl_Stationen_idx)
-```
 
 
-
-```{r}
-fread("../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv", sep = ";", nrows = 1, header = FALSE) %>% t
-```
-
-```{r}
-# Temperatur --> min, max, mean, threshold, sum             # TMK, TXK, TNK
-# rel. Luftfeuchte -->min, max, mean,                       # UPM: nur Tagesmittel
-# Globalstrahlung --> sum1, sum2                            # 
-# Windgeschwindigkeit                                       # FM
-# Niederschlag                                              # RSK
-# Tageslichtstunden (berechnen) --> tag, threshold, sum     # 
-```
-
-
-```{r}
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#Daten laden
-```{r}
-#Select data from the DWD CDC FTP Server
-link <- selectDWD(id = "00011", res="daily", var="kl", per="recent", current=TRUE, meta = TRUE) 
-
-#var="kl" = Klima-Daten (alle gemessenen Parameter)
-
-#Download data from the DWD CDC FTP Server
-file <- dataDWD(url = link, read=FALSE, dir="DWDdata", quiet=TRUE, force=NA)
-
-#Process data from the DWD CDC FTP Server to a data.frame
-clim <- readDWD(file, varnames=TRUE,fread=FALSE) #fread = FALSE for full Windows compatibility
-str(clim)
-```
 
