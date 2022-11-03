@@ -31,3 +31,4 @@ vignettes/*.pdf
 sync.ffs_db
 
 data/raw_data/DWDdata/
+data/derived_data/DWD_data/
