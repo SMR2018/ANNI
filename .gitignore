@@ -28,7 +28,7 @@ vignettes/*.pdf
 .Renviron
 #Store-Dateien?
 *.DS_Store
-sync.ffs_db
+*/.sync.ffs_db
 
 data/raw_data/DWDdata/
 data/raw_data/DWD_data/
