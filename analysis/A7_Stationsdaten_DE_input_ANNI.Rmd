@@ -13,6 +13,7 @@ library(dplyr)
 library(tidyr)
 library(purrr)
 library(lubridate)
+library(stringr)
 ```
 
 # Welche Parameter werden benötigt?
@@ -278,7 +279,8 @@ Uhr Folgetag definiert."
 
 
 
-## Globalstrahlunf (unter Ordner "solar") 
+## Globalstrahlung (unter Ordner "solar") 
+Die Einheit der Daten ist J/cm²
 Hier überspringen. Bereits einmal ausgeführt und Daten gespeichert.
 ```{r eval=FALSE, include=TRUE, max.print = 10}
 #Select data from the DWD CDC FTP Server
@@ -288,57 +290,285 @@ link
 
 #Download data from the DWD CDC FTP Server uncomment to load!
 # file <- dataDWD(url = link, read=FALSE,
-#                 dir = "../data/raw_data/DWDdata/solar_Globalstrahlung/",
+#                 dir = "../data/raw_data/DWDdata/solar_Globalstrahlung/zipped/",
 #                 quiet=TRUE, force=NA)
 
 #if file couldn't be downloaded, remove from list
 file <- file[file.exists(file)]
-#file <- list.files(path = "../data/raw_data/DWDdata/solar_Globalstrahlung", full.names = TRUE, pattern = ".zip")
+#file <- list.files(path = "../data/raw_data/DWD_data/solar_Globalstrahlung/zipped", full.names = TRUE, pattern = ".zip")
+```
+
+#unzip alle Daten über Terminal: (schnelleres Einlesen im nächsten Schritt)
+```{bash eval=FALSE, include=TRUE}
+unzip ../data/raw_data/DWD_data/solar_Globalstrahlung/zipped/\*.zip -d ../data/raw_data/DWD_data/solar_Globalstrahlung/unzipped/
 ```
 
 
+
+
+
+
+# Einlesen der gedownloadeden GS-Daten
 ```{r eval=FALSE, include=TRUE}
+idx <- 1:100
 #Process data from the DWD CDC FTP Server to a data.frame
-solar <- readDWD(file[1:5], varnames=TRUE,fread=F) 
-str(solar)
+solar <- readDWD(file[idx], varnames=TRUE,fread=F) 
+#str(solar[[1]])
+```
+
+#Einlesen mit data.table
+```{r, eval=FALSE}
+file_list_solar_unzipped <- list.files(path = "../data/raw_data/DWD_data/solar_Globalstrahlung/unzipped/", 
+                                       full.names = TRUE, pattern = ".txt")
+solar2 <- map(file_list_solar_unzipped,
+              ~fread(file = ., 
+                     header=T, sep=";", select = c("MESS_DATUM", "GS_10"), showProgress = TRUE
+              ))
+```
+
+
+#Datensätze mit Werten zur GS filtern
+```{r, eval=FALSE ,warning=FALSE}
+solar3 <- map_df(.x = 1:length(solar2), 
+                 ~pull(.data = solar2[[.x]], GS_10) %>%
+                     ifelse(.<= -998,NA,.) %>%
+                     range(., na.rm = TRUE)%>% 
+                     as.matrix %>% t %>% 
+                     as.data.frame %>% 
+                     setNames(c("min_GS", "max_GS"))
+) %>% 
+    mutate(idx = 1:n()) %>%
+    filter(min_GS != Inf)
+
+# solar3
+# nrow(solar3) 
+```
+
+```{r, eval=FALSE}
+solar4 <- solar2[solar3$idx]
+names(solar4) <- paste0("Auswahl_", basename(file_list_solar_unzipped[solar3$idx]))
+```
+
+#Bereinigte Daten speichern
+```{r, eval=FALSE}
+# map(1:length(solar4),
+#     ~fwrite(x = solar4[[.]], 
+#             file = paste0("../data/derived_data/DWD_data/solar_Globalstrahlung/",names(solar4)[.]))
+# )
 ```
 
 ```{r}
-df %>% dplyr::select(M)
+rm(list = c(ls()[grepl(x = ls(), pattern = "id_|solar|file")]))
+gc()
 ```
 
-GS_10.Strahlung_Global
+
+# Ausgewählte GS-Daten einlesen:
+```{r}
+file_list <- list.files("../data/derived_data/DWD_data/solar_Globalstrahlung/", full.names = TRUE)
+solar <- map(file_list, ~fread(.))
+```
 
 ```{r}
-map_df(solar[1:5], ~.[,"GS_10.Strahlung_Global"] %>% 
-        ifelse(.==-999,NA,.) %>%
-        range(., na.rm = TRUE)%>% as.matrix %>% t %>% as.data.frame
-)
-
+# #Anzahl Beobachtungen an einem Tag bei 10-Min Intervall
+# anz <- 60/10 * 24 #144 Beobachtungen
+# 
+# x <- solar[[5]] %>%
+#     mutate_at("GS_10", ~ifelse(. == -999, NA, .)) %>% 
+#     
+#     mutate_at("MESS_DATUM", ~as_datetime(as.character(.),
+#                                          format = "%Y%m%d%H%M")) %>%
+#     #nicht alle Daten sind in 10-Minuten-Incrementen. Hier auffüllen, um später Tages-Summe korrekt zu bilden
+#     full_join(data.frame(MESS_DATUM = seq(from = min(.$MESS_DATUM), to = max(.$MESS_DATUM), by = (60*10)))) %>%
+#     arrange(MESS_DATUM) %>% 
+#     mutate(datum = as.Date(MESS_DATUM),
+#            stunde = hour(MESS_DATUM)) %>% 
+#     
+#     # Hälfte der Einträge am Tag müssen vorhanden sein, sonst Tag löschen:
+#     group_by(datum) %>%
+#     mutate(n = sum(!is.na(GS_10), na.rm=TRUE)) %>%
+#     # mutate(time_increment = c(NA, diff(MESS_DATUM))) 
+#     ## jetzt sollte alles in 10 Minuten-Abständen sein!
+#     # x$time_increment %>% unique() %>% as.numeric() %>% sort()
+#     
+#     filter(n > anz/2) %>% 
+#     
+#     #Fehlende Werte approximieren
+#     group_by(datum) %>%
+#     mutate_at("GS_10", ~round(zoo::na.approx(.,  na.rm=FALSE, rule = 2),1))
+# x
+# 
+# plot(x$MESS_DATUM, x$GS_10, pch = 16, col = alpha("black", 0.5))
+# lines(x$MESS_DATUM, x$GS_10)
 ```
 
 
 
 
+```{r}
+#Anzahl Beobachtungen an einem Tag bei 10-Min Intervall
+anz <- 60/10 * 24 #144 Beobachtungen
+```
+
+#long und lat auslesen:
+```{r}
+id_extract_all <- str_extract(string = basename(file_list), pattern ="[[:digit:]]++.txt") %>% 
+    str_extract(., pattern = "[[:digit:]]++") %>% as.numeric 
+
+id_extract_unique <- id_extract_all %>% unique
+
+long_lat <- meta1 %>% filter(Stations_id %in% id_extract_unique) %>% 
+    select(Stations_id, geoBreite, geoLaenge) %>% 
+    filter(!duplicated(.)) %>%
+    group_by(Stations_id) %>%
+    summarise_all(~round(mean(.), 2))
+```
 
 
+# Nacht: Globalstrahlung == 0 als Fixpunkt berechnen. 
+Um Fehlwerte bei Nacht-Messungen zu eliminieren.
+Output: Tabelle mit sunrise und dusk für jeden Messtag
+```{r}
+GS0_nacht <- function(idx){
+    output <- suncalc::getSunlightTimes(date = unique(
+        solar[[idx]] %>% 
+            filter(GS_10 >= 0) %>%
+            mutate_at("MESS_DATUM", 
+                      ~as.Date(as_datetime(as.character(.),
+                                           format = "%Y%m%d%H%M"))) %>% 
+            pull(MESS_DATUM)
+    ), 
+    lat = long_lat %>% filter(Stations_id == id_extract_all[idx]) %>% pull(geoBreite),
+    lon = long_lat %>% filter(Stations_id == id_extract_all[idx]) %>% pull(geoLaenge)
+    ) %>% 
+        select(sunrise, dusk) %>% 
+        mutate_all(~floor_date(., unit = "10 minutes")) %>% 
+        pivot_longer(cols = everything(), values_to = "MESS_DATUM") %>%
+        mutate(GS_nacht = 0) %>%
+        select(-name)
+    
+    output
+}
+
+list_df_GS0_nacht <- map(1:length(solar), ~GS0_nacht(.))
+list_df_GS0_nacht[[5]]
+```
 
 
+#Einzelne Tabellen bereinigen: 
+mit NA-gefüllte Tage entfernen
+Tage mit weniger als der Hälfte der Einträge löschen
+alles auf 10-Minuten Intervalle korrigieren
+Sonnenauf- und Unergang mit GS_10 = 0 hinzufügen
+Fehlende Werte approximieren (interpolieren)
+
+```{r}
+tidy_solar_df <- function(idx){
+    output <- solar[[idx]] %>%
+        mutate_at("GS_10", ~ifelse(. == -999, NA, .)) %>% 
+        
+        #Fehlende Werte entfernen:
+        filter(!is.na(GS_10)) %>%
+        mutate_at("MESS_DATUM", ~as_datetime(as.character(.),
+                                             format = "%Y%m%d%H%M")) %>%
+        
+        #nicht alle Daten sind in 10-Minuten-Incrementen. Hier auffüllen, um später Tages-Summe korrekt zu bilden
+        full_join(map_df(unique(as.Date(.$MESS_DATUM)), 
+                         ~data.frame(
+                             MESS_DATUM = seq(
+                                 from = floor_date(as.POSIXct(.),"1 day") , 
+                                 to = floor_date(as.POSIXct(.),"1 day") +(60*60*24) - (60*10), 
+                                 by = 60*10))
+        )
+        ) %>%
+        
+        arrange(MESS_DATUM) %>% 
+        mutate(datum = as.Date(MESS_DATUM),
+               stunde = hour(MESS_DATUM)) %>% 
+        
+        # Hälfte der Einträge am Tag müssen vorhanden sein, sonst Tag löschen:
+        group_by(datum) %>%
+        mutate(n = sum(!is.na(GS_10), na.rm=TRUE)) %>%
+        # mutate(time_increment = c(NA, diff(MESS_DATUM))) 
+        ## jetzt sollte alles in 10 Minuten-Abständen sein!
+        # x$time_increment %>% unique() %>% as.numeric() %>% sort()
+        
+        filter(n > anz/2) %>% 
+        
+        #sunset und dusk auf GS == 0 setzen, um Fehlmessungen in der NAcht im nächsten Schritt korrekt zu interpolieren.
+        ungroup() %>%
+        left_join(list_df_GS0_nacht[[idx]],  by = "MESS_DATUM") %>%
+        mutate_at("GS_10", ~ifelse(is.na(GS_nacht), ., 0)) %>%
+        
+        
+        #Fehlende Werte approximieren
+        group_by(datum) %>%
+        mutate_at("GS_10", ~round(zoo::na.approx(.,  na.rm=FALSE, rule = 2),1))
+    
+    output
+}
+
+```
+
+```{r, eval = FALSE}
+solar_tidy <- map(1:length(solar), ~tidy_solar_df(.))
+#solar_tidy2 <- solar_tidy
+```
 
 
+# Aufsummieren der 10-Minuten-Intervalle Globalstrahlung und Konvertierung in Wh m-2: Tagessumme GS
+Daten sind in J cm-2 == Ws cm-2, da
+1 W = 1 J/s
+Konvertieren in Wh m-2 --> Ws cm-2  /  (60*60)  * 10000
+
+```{r}
+zeit_intervall <- 60*60 # 1 Stunde?
+cm2 <- 100*100
+
+solar_daily <- map(solar_tidy, 
+                   ~group_by(.data = ., datum) %>% 
+                       summarise(globalstrahlung_Wh_m2 = sum(GS_10 / zeit_intervall , na.rm = TRUE) * cm2
+                       ) %>%
+                       filter(globalstrahlung_Wh_m2 != 0))
+
+```
 
 
+# Vergleich mit Globalstrahlung (Wh/m2) im Jahresverlauf 2021 am Queckbrunnerhof
+Dient der Plausibilitäts-Analyse der Einheits-Konvertierung
+```{r}
+#Daten Queckbrunnerhof einlesen:
+df <- fread("../../GeoSenSys2020/Data_2020/Messdaten/Queckbrunnerhof/Wetterstation_Queckbrunnerhof/Wetter_Schifferstadt_2020_taeglich.csv", dec = ",") 
+df <- df %>% select(datum_wetter = Tag, globalstrahlung_Wh_m2 = SUM_GS200) %>%
+    mutate_at("datum_wetter", ~as.Date(., format = "%d.%m.%Y"))
+
+idx = 403 # Mannheim in meiner Liste
+
+ggplot(df, aes(datum_wetter, globalstrahlung_Wh_m2, col = "Queckbrunnerhof \n(DLR Station)")) + 
+    geom_point() + geom_line() +
+    geom_line(data = solar_daily[[idx]] %>% 
+                  filter(between(datum,as.Date("2020-01-01"),as.Date("2020-12-31"))), 
+              aes(datum, globalstrahlung_Wh_m2, col = "Mannheim \n(DWD Stations_id 05906)")) +
+    scale_color_discrete("Wetter-Station:") + 
+    theme_bw() + 
+    theme(panel.grid = element_blank(), legend.position = "bottom")
+```
+Die Daten der beiden Stationen (Entfernung < 20 km) stimmen nahezu überein. Die Konvertierung ist plausibel.
 
 
-
-
-
-
-
-
-
-
-
+```{r}
+# map(solar_daily, ~range(.$datum, na.rm = TRUE))
+# idx = 250
+map(1:length(solar_daily), 
+    ~fwrite(x = solar_daily[[.x]], 
+            file = paste0("../data/derived_data/DWD_data/solar_Globalstrahlung/Xdaily/", 
+                          "globalstrahlung_Wh_m2", 
+                          range(solar_daily[[.x]]$datum, na.rm = TRUE) %>% 
+                              format.Date("%Y%m%d") %>% 
+                              paste0(collapse = "_"),
+                          "Stations_id_", id_extract_all[idx], ".csv", collapse = "_")
+    ))
+```
 
 
 
