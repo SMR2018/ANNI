@@ -6,7 +6,7 @@ params:
   wetter_anbau_daten_csv: ../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv
 ---
 
-
+Anwenden des gespeicherten ANNI-Modells im Loop mit Trainingsdaten für einen Satz.
 
 ```{r}
 library(keras)
@@ -23,7 +23,6 @@ library(cowplot)
 
 ```{r, eval=TRUE}
 filepath_tf <- params$filepath_tf
-#"../../data/derived_data/Model2/ANNI_Tensorflow_20230420"
 new_model <- load_model_tf(filepath_tf)
 ```
 
