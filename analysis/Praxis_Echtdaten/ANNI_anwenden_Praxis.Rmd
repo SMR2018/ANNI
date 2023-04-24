@@ -157,12 +157,15 @@ p3
 ```{r}
 ### Grafik speichern
 pfad0 <- "../../graphics/ANNI_Praxis/ANNI_Ergebnis"
-feldinfo <- paste(params$betrieb, params$feld, "Satz", params$satz, sep = "_")
-zeitraum <- paste0("DAS", paste0(range(satz_raw$tage_seit_aussaat), collapse = "_"))
+feldinfo <- paste(params$betrieb, params$feld, "Satz", params$satz, 
+                  sep = "_")
+zeitraum <- paste0("DAS", paste0(range(satz_raw$tage_seit_aussaat), 
+                                 collapse = "_"))
 #zeitstempel <- Sys.Date() %>% format("%Y%m%d")  
 full_name <- paste0(c(pfad0, feldinfo, zeitraum), collapse = "_")
 
-ggsave(p3, filename = paste0(full_name, ".png"), device = "png", width = 7, height = 5)
+ggsave(p3, filename = paste0(full_name, ".png"), device = "png", 
+       width = 7, height = 5)
 
 options(width = 80)
 cat(paste0("Grafik gespeichert unter: ", full_name, ".png"))
