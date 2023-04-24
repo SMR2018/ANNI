@@ -1,0 +1,490 @@
+---
+title: "Wetterdaten Praxisschlag beziehen"
+
+---
+
+#Pakete laden:
+```{r, message=FALSE}
+library(data.table)
+library(rdwd) ## Paket fuer DWD-Daten-Import!
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(stringr)
+```
+
+##Rosengarten:
+Koordinaten:
+456345.50,5497038.93 #UTM 32N
+49.6244904,8.3955951 #WGS84
+
+```{r}
+stations_kl <- rdwd::nearbyStations(lat = 49.6244904, lon = 8.3955951, radius = 30, var = "kl", per = "recent", res = "daily")
+stations_kl
+stations_solar <- rdwd::nearbyStations(lat = 49.6244904, lon = 8.3955951, radius = 100, var = "solar", per = "recent", res = "10_minutes")
+stations_solar
+stations_moist <- rdwd::nearbyStations(lat = 49.6244904, lon = 8.3955951, radius = 30, var = "moisture", per = "recent", res = "subdaily")
+stations_moist
+stations_wind <- rdwd::nearbyStations(lat = 49.6244904, lon = 8.3955951, radius = 30, var = "wind", per = "recent", res = "10_minutes")
+stations_wind
+
+#nächste Station: Worms, Stations_id = 5692
+id_kl <- stations_kl$Stations_id[2]# 5692#Worms
+id_solar <- stations_solar$Stations_id[2]
+id_moist <- stations_moist$Stations_id[2]
+id_wind <- stations_wind$Stations_id[2]
+```
+
+
+## Wetterdaten (unter Ordner "kl" = Klima) 
+Hier überspringen. Bereits einmal ausgeführt und Daten gespeichert.
+```{r eval=T, include=TRUE}
+#Select data from the DWD CDC FTP Server
+link <- selectDWD(id = id_kl, #Worms
+                  res="daily", var="kl", per="recent", current=FALSE, meta = FALSE)
+#per = "": beides
+link
+#var="kl" = Klima-Daten (alle gemessenen Parameter)
+
+#Download data from the DWD CDC FTP Server
+file <- dataDWD(url = link, read=FALSE, 
+                dir = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/kl_klima/", 
+                quiet=TRUE, force=NA)
+
+#if file couldn't be downloaded, remove from list
+file <- file[file.exists(file)]
+file <- list.files(path = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/kl_klima//", full.names = TRUE, pattern = ".zip")
+
+#Process data from the DWD CDC FTP Server to a data.frame
+clim <- readDWD(file, varnames=TRUE,fread=TRUE) 
+#fread = FALSE for full Windows compatibility
+#str(clim)
+```
+
+
+#passende Parameter auswählen:
+```{r, eval=T}
+clim_filtered <- clim %>% 
+    dplyr::select(datum = MESS_DATUM,
+                  Tmean_gradC = TMK.Lufttemperatur,
+                  Tmin_gradC = TNK.Lufttemperatur_Min,
+                  Tmax_gradC =TXK.Lufttemperatur_Max,
+                  relLuftfeuchte_mean_prozent = UPM.Relative_Feuchte,
+                  niederschlag_mm_sum = RSK.Niederschlagshoehe, ##herausnehmen für ANNI?? 
+                  wasser_input_mm = RSK.Niederschlagshoehe#, ##stattdessen Parameter hinzugefügt für ANNI?? 
+    ) 
+
+rm(clim)
+```
+
+#Daten speichern:
+```{r}
+fwrite(clim_filtered, "data/derived_data/Wetterdaten_Praxis/Rosengarten_id_Worms/klima.csv")
+```
+
+
+# GLOBALSTRAHLUNG
+
+## Globalstrahlung (unter Ordner "solar") 
+Die Einheit der Daten ist J/cm²
+Hier überspringen. Bereits einmal ausgeführt und Daten gespeichert.
+```{r eval=T, include=TRUE, max.print = 10}
+#Select data from the DWD CDC FTP Server
+link <- selectDWD(id = id_solar, 
+                  res="10_minutes", var="solar", per="recent", current=FALSE, meta = FALSE)
+link
+
+
+#Download data from the DWD CDC FTP Server uncomment to load!
+file <- dataDWD(url = link, read=FALSE,
+                dir = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/solar/zipped/",
+                quiet=TRUE, force=NA)
+
+#if file couldn't be downloaded, remove from list
+file <- file[file.exists(file)]
+file <- list.files(path = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/solar/zipped/", full.names = TRUE, pattern = ".zip")
+```
+
+#unzip alle Daten über Terminal: (schnelleres Einlesen im nächsten Schritt)
+```{bash eval=T, include=TRUE}
+unzip data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/solar/zipped/\*.zip -d data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/solar/unzipped/
+```
+
+# Einlesen der gedownloadeden GS-Daten mit data.table
+```{r, eval=T}
+#Ueber DWD-interne Funktion:
+##solar <- readDWD(file, varnames=TRUE,fread=F) 
+
+#Ueber data.table::fread
+file_list_solar_unzipped <- list.files(path = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/solar/unzipped/", 
+                                       full.names = TRUE, pattern = ".txt")
+solar2 <- fread(file = file_list_solar_unzipped, 
+                header=T, sep=";", select = c("MESS_DATUM", "GS_10"), showProgress = TRUE)
+
+#tail(solar2)
+#range(solar2)
+
+solar2 <-solar2 %>% mutate_at("GS_10", ~ifelse(.<= -998,NA,.))
+```
+
+#Einzelne Tabellen bereinigen: 
+mit NA-gefüllte Tage entfernen
+Tage mit weniger als der Hälfte der Einträge löschen
+alles auf 10-Minuten Intervalle korrigieren
+Sonnenauf- und Unergang mit GS_10 = 0 hinzufügen
+Fehlende Werte approximieren (interpolieren)
+
+```{r}
+#Anzahl Beobachtungen an einem Tag bei 10-Min Intervall
+anz <- 60/10 * 24 #144 Beobachtungen
+
+#Funktion: 10 Minuten Intervall erzwingen. Nacht-Werte = 0 anfuegen und fehlende WErte löschen / interpolaieren
+tidy_solar_df <- solar2 %>%
+    mutate_at("GS_10", ~ifelse(. == -999, NA, .)) %>% 
+    
+    #Fehlende Werte entfernen:
+    filter(!is.na(GS_10)) %>%
+    mutate_at("MESS_DATUM", ~as_datetime(as.character(.),
+                                         format = "%Y%m%d%H%M")) %>%
+    
+    #nicht alle Daten sind in 10-Minuten-Incrementen. Hier auffüllen, um später Tages-Summe korrekt zu bilden
+    complete(MESS_DATUM = seq.POSIXt(min(MESS_DATUM), max(MESS_DATUM), by="10 min")) %>%
+    
+    arrange(MESS_DATUM) %>% 
+    mutate(datum = as.Date(MESS_DATUM),
+           stunde = hour(MESS_DATUM)) %>% 
+    
+    # Hälfte der Einträge am Tag müssen vorhanden sein, sonst Tag löschen:
+    group_by(datum) %>%
+    mutate(n = sum(!is.na(GS_10), na.rm=TRUE)) %>%
+    ## jetzt sollte alles in 10 Minuten-Abständen sein!
+    
+    filter(n > anz/2) %>% 
+    
+    # #sunset und dusk auf GS == 0 setzen, um Fehlmessungen in der Nacht im nächsten Schritt korrekt zu interpolieren.
+    # ungroup() %>%
+    # left_join(list_df_GS0_nacht[[idx]],  by = "MESS_DATUM") %>%
+    # mutate_at("GS_10", ~ifelse(is.na(GS_nacht), ., 0)) %>%
+    
+    #Fehlende Werte approximieren
+    group_by(datum) %>%
+    mutate_at("GS_10", ~round(zoo::na.approx(.,  na.rm=FALSE, rule = 2),1))
+```
+
+# Aufsummieren der 10-Minuten-Intervalle Globalstrahlung und Konvertierung in Wh m-2: Tagessumme GS
+Daten sind in J cm-2 == Ws cm-2, da
+1 W = 1 J/s
+Konvertieren in Wh m-2 --> Ws cm-2  /  (60*60)  * 10000
+
+```{r}
+zeit_intervall <- 60*60 # 1 Stunde?
+cm2 <- 100*100
+
+solar_daily <- tidy_solar_df %>% group_by(datum) %>% 
+    summarise(globalstrahlung_Wh_m2 = round(sum(GS_10 / zeit_intervall , na.rm = TRUE) * cm2, 1)) %>%
+    filter(globalstrahlung_Wh_m2 != 0)
+
+
+```
+
+#Daten speichern:
+```{r}
+fwrite(solar_daily, "data/derived_data/Wetterdaten_Praxis/Rosengarten_id_Worms/solar.csv")
+```
+
+
+#LUFTFEUCHTIGKEIT
+
+## Luftfeuchtigkeit (unter Ordner "moisture") 
+Die Einheit der Daten ist %
+Hier überspringen. Bereits einmal ausgeführt und Daten gespeichert.
+```{r eval=T, include=TRUE, max.print = 10}
+#Select data from the DWD CDC FTP Server
+link <- selectDWD(id = id_moist, 
+                  res="subdaily", var="moisture", per="recent", current=FALSE, meta = FALSE)
+link
+
+#Download data from the DWD CDC FTP Server uncomment to load!
+file <- dataDWD(url = link, read=FALSE,
+                dir = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/moisture/zipped/",
+                quiet=TRUE, force=NA)
+
+#if file couldn't be downloaded, remove from list
+file <- file[file.exists(file)]
+file <- list.files(path = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/moisture/zipped/", full.names = TRUE, pattern = ".zip")
+```
+
+#unzip alle Daten über Terminal: (schnelleres Einlesen im nächsten Schritt)
+```{bash eval=T, include=TRUE}
+unzip data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/moisture/zipped/\*.zip -d data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/moisture/unzipped/
+```
+
+# Einlesen der gedownloadeden Luftfeuchtigkeits-Daten mit data.table
+```{r, eval=T}
+file_list_unzipped <- list.files(path = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/moisture/unzipped/", 
+                                 full.names = TRUE, pattern = "produkt")
+df <- fread(file = file_list_unzipped, 
+            header=T, sep=";", select = c("STATIONS_ID", "MESS_DATUM", "RF_TER"), showProgress = TRUE)
+
+#Datum umformen:
+df <- df %>% mutate_at("MESS_DATUM", ~as_datetime(as.character(.),format = "%Y%m%d%H"))
+```
+
+
+#Daten bereinigen und nach Datum filtern:
+```{r}
+df_filtered <- df %>% ungroup() %>%
+    mutate_at("RF_TER", ~ifelse(. == -999, NA, .)) %>% 
+    
+    #Fehlende Werte entfernen:
+    filter(!is.na(RF_TER)) %>%
+    mutate(datum = as.Date(MESS_DATUM)) 
+
+```
+
+
+#Tages-Mittelwerte bilden
+```{r}
+df_tagesmittel <-  df_filtered %>%
+    #Nur vorhandene datum auffüllen! (Um leere Werte aus Jahren ohne Messungen zu vermeiden)
+    ungroup() %>%
+    complete(MESS_DATUM = seq.POSIXt(min(MESS_DATUM), 
+                                     max(MESS_DATUM), 
+                                     by="1 hour")) %>%
+    mutate_at("RF_TER", ~round(zoo::na.approx(.,  na.rm=FALSE, rule = 2),1)) %>%
+    group_by(STATIONS_ID, datum) %>%
+    summarise(relLuftfeuchte_mean_prozent = mean(x = RF_TER),
+              relLuftfeuchte_min_prozent = min(RF_TER),
+              relLuftfeuchte_max_prozent = max(RF_TER), .groups = "drop") %>%
+    mutate_if(is.numeric, ~round(., 1)) %>%
+    select(-STATIONS_ID)
+
+
+```
+
+#Daten speichern:
+```{r}
+fwrite(df_tagesmittel, "data/derived_data/Wetterdaten_Praxis/Rosengarten_id_Worms/luftfeuchte.csv")
+```
+
+
+
+
+
+
+############ WIND!!
+
+id_wind
+
+## Wind (unter Ordner "wind") 
+```{r eval=T, include=TRUE, max.print = 10}
+#Select data from the DWD CDC FTP Server
+link <- selectDWD(id = id_wind, 
+                  res="10_minutes", var="wind", per="recent", current=FALSE, meta = FALSE)
+link
+
+#Download data from the DWD CDC FTP Server uncomment to load!
+file <- dataDWD(url = link, read=FALSE,
+                dir = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/wind/zipped/",
+                quiet=TRUE, force=NA)
+
+#if file couldn't be downloaded, remove from list
+file <- file[file.exists(file)]
+file <- list.files(path = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/wind/zipped/", full.names = TRUE, pattern = ".zip")
+```
+
+#unzip alle Daten über Terminal: (schnelleres Einlesen im nächsten Schritt)
+```{bash eval=T, include=TRUE}
+unzip data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/wind/zipped/\*.zip -d data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/wind/unzipped/
+```
+
+# Einlesen der gedownloadeden Luftfeuchtigkeits-Daten mit data.table
+```{r, eval=T}
+file_list_unzipped <- list.files(path = "data/raw_data/Wetterdaten_Praxis/Rosengarten_id_Worms/wind/unzipped/", 
+                                 full.names = TRUE, pattern = "produkt")
+df <- fread(file = file_list_unzipped, 
+            header=T, sep=";", select = c("STATIONS_ID", "MESS_DATUM", "FF_10"), showProgress = TRUE)
+
+#Datum umformen:
+df <- df %>% mutate_at("MESS_DATUM", ~as_datetime(as.character(.),format = "%Y%m%d%H"))
+```
+
+
+#Daten bereinigen und nach Datum filtern:
+```{r}
+df_filtered <- df %>% ungroup() %>%
+    mutate_at("FF_10", ~ifelse(. == -999, NA, .)) %>% 
+    
+    #Fehlende Werte entfernen:
+    filter(!is.na(FF_10)) %>%
+    mutate(datum = as.Date(MESS_DATUM)) 
+
+```
+
+
+#Tages-Mittelwerte bilden
+```{r}
+df_tagesmittel <-  df_filtered %>%
+    #Nur vorhandene datum auffüllen! (Um leere Werte aus Jahren ohne Messungen zu vermeiden)
+    ungroup() %>%
+    group_by(STATIONS_ID, datum) %>%
+    summarise(windgeschwindigkeit_m_s = mean(FF_10, na.rm = T), .groups = "drop") %>%
+    mutate_if(is.numeric, ~round(., 1)) %>%
+    select(-STATIONS_ID)
+
+
+```
+
+#Daten speichern:
+```{r}
+fwrite(df_tagesmittel, "data/derived_data/Wetterdaten_Praxis/Rosengarten_id_Worms/wind.csv")
+```
+
+
+###############
+
+
+
+
+
+
+
+
+
+
+
+
+#Workspace bereinigen!
+```{r}
+rm(list = ls())
+```
+
+#Klima-Daten neu einlesen:
+```{r}
+path0 <- "data/derived_data/Wetterdaten_Praxis/Rosengarten_id_Worms/"
+file_list <- list.files(path0)
+
+klima <- fread(paste0(path0, "klima.csv"), colClasses = c("Date", rep("numeric",times = 6))) %>% 
+    select(-relLuftfeuchte_mean_prozent)
+solar <- fread(paste0(path0, "solar.csv"), colClasses = c("Date", rep("numeric",times = 1)))
+luftfeuchte <- fread(paste0(path0, "luftfeuchte.csv"), colClasses = c("Date", rep("numeric",times = 3)))
+wind <- fread(paste0(path0, "wind.csv"), colClasses = c("Date", rep("numeric",times = 1)))
+
+df <- klima %>% left_join(solar, by = "datum") %>% left_join(luftfeuchte, by = "datum") %>%
+    left_join(wind, by = "datum")
+```
+
+```{r}
+datum_aussaat <- as_date("2023-03-01")
+df <- df %>% filter(datum >= datum_aussaat)
+```
+
+#Welche PArameter fehlen noch?
+```{r}
+data0 <- fread("data/derived_data/input_tabelle_2020_2022_20220808_complete.csv", nrows = 1)
+idx <- as.numeric(na.omit(match(names(df), names(data0))))
+names(data0)[-idx]
+```
+
+```{r}
+
+df <- df %>% mutate(
+    tage_seit_aussaat = 0:(n()-1),
+    Ton_prozent = 30,
+    Schluff_prozent = 55,
+    Sand_prozent = 15,
+    C_org_prozent = 1.2,
+    ibi = 3.2,
+    irmi = 20.1
+)
+
+c(#"tage_seit_aussaat" , 
+    "Tmean_th9_25_gradC" , 
+    #"windgeschwindigkeit_m_s" , 
+    "tageslicht_h" ,
+    "tageslicht_h_th9" , 
+    "Tmean_gradC_sum"  , 
+    "Tmean_th9_25_gradC_sum" , 
+    "globalstrahlung_Wh_m2_sum" , 
+    "tageslicht_h_sum" , 
+    "tageslicht_h_th9_sum" , 
+    # "Ton_prozent" , 
+    # "Schluff_prozent" , 
+    # "Sand_prozent" , 
+    # "C_org_prozent" , 
+    # "ibi" , 
+    # "irmi" , 
+    "wasser_input_Vortag")
+```
+
+# fuer Tempsum: untere und obere Grenze der Temperatur berücksichtigen (5 und 25 °C) und neue Tagesmittelwerte berechnen
+```{r}
+Greznwert_temp <- 9.1
+#Angenommen, der Spinat wächst erst ab 9.1°C???
+
+df <- df %>%
+    mutate(Tmean_th9_25_gradC = ifelse(Tmean_gradC > 25, 25,Tmean_gradC), .after = "Tmean_gradC") %>%
+    mutate_at("Tmean_th9_25_gradC", ~ifelse(.<Greznwert_temp,0,.))
+
+```
+
+#Wetter-Daten einlesen und Tageslicht-Stunden anfügen:
+```{r}
+source("../GeoSenSys2020/Eigene_Funktionen/Lichter_Tag.R")
+
+#Greznwert_temp siehe oben
+#49.6244904,8.3955951 #WGS84
+
+df <- df %>%
+    #Wetter-Daten einlesen und Tageslicht-Stunden anfügen:
+    mutate(tageslicht_h = lichter_tag(datum = datum, lat = 49.62, lon = 8.39)) %>% #Geisenheim
+    mutate(tageslicht_h_th9 = ifelse(Tmean_gradC < Greznwert_temp,0,tageslicht_h))
+```
+
+
+
+#Cumsums bilden:
+```{r}
+df <- df %>%
+    mutate(niederschlag_mm = wasser_input_mm) %>%
+    #Cumsum einiger Parameter anfügen: 
+    mutate(across(.cols = c(Tmean_gradC, Tmean_th9_25_gradC ,globalstrahlung_Wh_m2,
+                            niederschlag_mm, tageslicht_h, tageslicht_h_th9), 
+                  .fns = list(sum = cumsum)))
+```
+
+#Vortages-Werte einfügen:
+```{r}
+df <- df <- df %>% mutate(
+    nFK_0010_Vortag = NA,
+    nFK_1020_Vortag = NA,
+    nFK_2030_Vortag = NA,
+    nFK_3040_Vortag = NA,
+    nFK_4050_Vortag = NA,
+    nFK_5060_Vortag = NA,
+    wasser_input_Vortag = c(0, wasser_input_mm[-n()]))
+
+df <- df %>% mutate(across(starts_with("nFK"), ~ifelse(tage_seit_aussaat == 0, 100, NA)))
+```
+
+
+
+```{r}
+idx <- as.numeric(na.omit(match(names(df), names(data0))))
+names(data0)[-idx]
+```
+
+
+
+```{r}
+names1 <- names(data0)[-c(1:6)]
+
+data_praxis <- df %>% select(all_of(names1))
+```
+
+```{r}
+fwrite(data_praxis, "data/derived_data/Wetterdaten_Praxis/Rosengarten_id_Worms/daten_komplett.csv")
+```
+
