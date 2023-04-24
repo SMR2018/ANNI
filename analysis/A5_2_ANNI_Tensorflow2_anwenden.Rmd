@@ -1,0 +1,90 @@
+---
+title: "R Notebook"
+params:
+  filepath_tf: ../data/derived_data/Model2/ANNI_Tensorflow_20230420
+  scaling_data_path: ../data/derived_data/Model2/scaling_data.csv
+  wetter_anbau_daten_csv: ../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv
+---
+
+
+
+```{r}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(ggplot2)
+#library(data.table)
+library(cowplot)
+```
+
+<!-- ## Vorgehen: -->
+
+<!-- 1\. Gespiechertes Modell laden -->
+
+```{r, eval=TRUE}
+filepath_tf <- params$filepath_tf
+#"../../data/derived_data/Model2/ANNI_Tensorflow_20230420"
+new_model <- load_model_tf(filepath_tf)
+```
+
+<!-- 2\. Skalierungs-Werte für Input-Daten laden -->
+
+```{r}
+scaling_data <- data.table::fread(params$scaling_data_path)
+```
+
+<!-- 3\. Wetter- und Anbaudaten einlesen -->
+
+```{r}
+satz_raw <- data.table::fread(params$wetter_anbau_daten_csv)
+idx_einSatz <- 949:981
+satz_y <- satz_raw[idx_einSatz, c(1:6)]
+satz_raw <- satz_raw[idx_einSatz, -c(1:6)]
+
+satz_scaled <- scale(satz_raw, center = scaling_data$m, scale = scaling_data$s)
+```
+
+```{r}
+predictions_anni <- matrix(ncol = 6, nrow = nrow(satz_scaled))
+
+for (i in 1:(nrow(satz_scaled)-1)){
+    
+    predictions_anni[i,] <- new_model %>%
+        predict(x = matrix(nrow = 1, satz_scaled[i,]), verbose = 0)
+    satz_scaled[i+1,1:6] <- scale(matrix(predictions_anni[i,], nrow = 1),
+                                  center = scaling_data$m[1:6],
+                                  scale = scaling_data$s[1:6])
+    k_clear_session()
+}
+
+```
+
+
+```{r}
+x2 <- satz_y %>% as.data.frame() %>% 
+    mutate(tage_seit_aussaat = satz_raw$tage_seit_aussaat) %>%
+    tidyr::pivot_longer(cols = -tage_seit_aussaat, values_to = "measured", names_to = "depth")
+
+y2 <- predictions_anni %>% as.data.frame() %>% 
+    tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>% select(predicted)
+
+result <- bind_cols(x2, y2) %>% 
+    mutate_at("depth", 
+              ~factor(., labels = c("nFK_0010", "nFK_1020", "nFK_2030", 
+                                    "nFK_3040", "nFK_4050", "nFK_5060") ))
+```
+
+
+```{r, warning=FALSE}
+#, fig.width=4, fig.height=6}
+ggplot(result) +
+    geom_area(aes(x = tage_seit_aussaat, y = 60), fill = "grey90") + 
+    geom_line(aes(tage_seit_aussaat, measured, col = "gemessen")) + 
+    geom_line(aes(tage_seit_aussaat, predicted, col = "modelliert"))+ 
+    ylab("nFK (%)") + xlab("Tage seit Aussaat") +
+    facet_grid(depth~.) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank(), aspect.ratio = 1/4) +
+    scale_color_manual("", values = c("gemessen" = "black", "modelliert" = "red"))
+```
+
