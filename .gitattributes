@@ -4,3 +4,4 @@
 *.js linguist-detectable=false
 *.css linguist-detectable=false
 *.csv linguist-detectable=false
+*.pb linguist-detectable=false
