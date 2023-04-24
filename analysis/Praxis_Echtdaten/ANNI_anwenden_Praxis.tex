@@ -1,0 +1,134 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+%
+\documentclass[
+]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{lmodern}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math}
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{listings}
+\newcommand{\passthrough}[1]{#1}
+\lstset{defaultdialect=[5.3]Lua}
+\lstset{defaultdialect=[x86masm]Assembler}
+\usepackage{graphicx}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+% Set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\ifLuaTeX
+\usepackage[bidi=basic]{babel}
+\else
+\usepackage[bidi=default]{babel}
+\fi
+\babelprovide[main,import]{ngerman}
+% get rid of language-specific shorthands (see #6817):
+\let\LanguageShortHands\languageshorthands
+\def\languageshorthands#1{}
+\lstset{
+  breaklines=true
+}
+\usepackage{float}
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+\IfFileExists{bookmark.sty}{\usepackage{bookmark}}{\usepackage{hyperref}}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same} % disable monospaced font for URLs
+\hypersetup{
+  pdftitle={ANNI anwenden: Paxisphase 2023},
+  pdfauthor={Samantha Rubo},
+  pdflang={de},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{ANNI anwenden: Paxisphase 2023}
+\author{Samantha Rubo}
+\date{2023-04-20}
+
+\begin{document}
+\maketitle
+
+\hypertarget{vorgehen}{%
+\subsection{Vorgehen:}\label{vorgehen}}
+
+\hypertarget{daten-und-modell-laden}{%
+\subsubsection{1. Daten und Modell laden}\label{daten-und-modell-laden}}
+
+\hypertarget{gespiechertes-modell-laden}{%
+\subsubsection{2. Gespiechertes Modell
+laden}\label{gespiechertes-modell-laden}}
+
+\hypertarget{skalierungs-werte-fuxfcr-input-daten-laden}{%
+\subsubsection{3. Skalierungs-Werte für Input-Daten
+laden}\label{skalierungs-werte-fuxfcr-input-daten-laden}}
+
+\hypertarget{wetter--und-anbaudaten-einlesen}{%
+\subsubsection{4. Wetter- und Anbaudaten
+einlesen}\label{wetter--und-anbaudaten-einlesen}}
+
+\hypertarget{anni-fuxfcr-jeden-tag-einzeln-hintereinander-im-loop-ausfuxfchren}{%
+\subsubsection{5. ANNI Für jeden Tag einzeln hintereinander im Loop
+ausführen}\label{anni-fuxfcr-jeden-tag-einzeln-hintereinander-im-loop-ausfuxfchren}}
+
+\hypertarget{ergebnisse-formatieren}{%
+\subsubsection{6. Ergebnisse formatieren}\label{ergebnisse-formatieren}}
+
+\hypertarget{anni-ergebnis-plotten}{%
+\subsubsection{7. ANNI-Ergebnis plotten}\label{anni-ergebnis-plotten}}
+
+\hfill\break
+
+\begin{figure}[H]
+\includegraphics{ANNI_anwenden_Praxis_files/figure-latex/unnamed-chunk-9-1} \caption{Ergebnis des Bewässerungsmodells ANNI für die Fläche Rosengarten der Fa. Haas für die Tage 0-50 seit Aussaat. Dargestellt sind A) Wetterdaten für Niederschlag (mm) und mittlerer Tagestemperatur (°C) und B) die modellierte nutzbare Feldkapazität (nFK \%) für 6 Bodentiefen von 0-60 cm Tiefe.}\label{fig:unnamed-chunk-9}
+\end{figure}
+
+\hfill\break
+
+\hfill\break
+
+\begin{lstlisting}
+## Grafik gespeichert unter: ../../graphics/ANNI_Praxis/ANNI_Ergebnis_Haas_Rosengarten_Satz_1_DAS0_50.png
+\end{lstlisting}
+
+
+\end{document}
