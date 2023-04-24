@@ -12,6 +12,7 @@ library(dplyr)
 library(magrittr)
 library(neuralnet)
 library(ggplot2)
+library(data.table)
 ```
 
 
@@ -77,6 +78,13 @@ training <- scale(training, center = m, scale = s)
 test <- scale(test, center = m, scale = s)
 ```
 
+#Skalierungs-Daten speichern für Skalierung neuer Input-Daten in der Anwendung
+```{r}
+scaling_data <- data.frame(m=m, s=s)
+fwrite(scaling_data, file = "../data/derived_data/Model2/scaling_data.csv")
+```
+
+
 #Training mit random NA values:
 ```{r}
 # idx_na_ibi <- sample(1:nrow(training), size = 100, replace = FALSE)
@@ -85,7 +93,7 @@ test <- scale(test, center = m, scale = s)
 
 #Keras initiieren: Input-Layer und Output-Layer definieren
 #A ) Sequential Model
-```{r, eval=FALSE}
+```{r, eval=TRUE19,5m}
 model <- keras_model_sequential()
 
 #Modell weiter anpassen:
@@ -190,23 +198,124 @@ ggplot(result, aes(measured, predicted)) +
 ```
 #Modell speichern:
 ```{r, eval=FALSE}
-filepath_tf <- "../data/derived_data/Model1/ANNI_Tensorflow_20220819"
+filepath_tf <- "../data/derived_data/Model2/ANNI_Tensorflow_20230420"
 keras::save_model_tf(model, filepath = filepath_tf, overwrite = FALSE)
 ```
 
 #Gespiechertes Modell laden:
 ```{r, eval=FALSE}
-filepath_tf <- "../data/derived_data/Model1/ANNI_Tensorflow_20220819"
+#filepath_tf <- "../data/derived_data/Model1/ANNI_Tensorflow_20220819"
+filepath_tf <- "../data/derived_data/Model2/ANNI_Tensorflow_20230420"
+
 new_model <- load_model_tf(filepath_tf)
+```
 
+
+```{r, eval=FALSE}
 # Check its architecture
-#summary(new_model)
+summary(new_model)
 
-#fs::dir_tree(filepath_tf) #Ordnerstruktur anzeigen lassen:
+# fs::dir_tree(filepath_tf) #Ordnerstruktur anzeigen lassen:
 
 # Anwendung des gelandeden Modells wie oben:
-# new_model %>% evaluate(test, testtarget)
-# pred <- new_model %>% predict(test)
-# mean((testtarget-pred)^2) 
+new_model %>% evaluate(test, testtarget)
+pred <- new_model %>% predict(test)
+mean((testtarget-pred)^2)
 ```
+
+#Für einen Satz von oben in chronologischer Reihenfolge erstellen:
+```{r}
+idx_einSatz <- 949:981
+satz_raw <- data[idx_einSatz,]
+
+#X definieren: #Ab Spalte 7
+idx_x <- 7:ncol(data)
+#Target definieren: #erste 6 Spalten sind Y-Werte (nFK 0 - 60 cm)
+idx_y <- 1:6
+
+
+##Daten zusammenstellen:
+satz_x <- satz_raw[,idx_x]
+#Daten skalieren. 
+satz_x <- scale(satz_x, center = m, scale = s) #m und s oben bei Modellerstellung
+
+satz_target <- satz_raw[,idx_y]
+```
+
+```{r}
+new_model %>% evaluate(satz_x, satz_target)
+pred <- new_model %>% predict(satz_x)
+mean((satz_target-pred)^2) 
+
+```
+
+```{r}
+x2 <- satz_target %>% as.data.frame() %>% 
+    mutate(Tage_seit_Aussaat = data[idx_einSatz,13]) %>% #Spalte 13 ist DAS
+    tidyr::pivot_longer(cols = -Tage_seit_Aussaat, values_to = "measured", names_to = "depth")
+
+y2 <- pred %>% as.data.frame() %>% 
+    tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>% select(predicted)
+
+result <- bind_cols(x2, y2) %>% 
+    mutate_at("depth", 
+              ~factor(., labels = c("nFK_0010", "nFK_1020", "nFK_2030", 
+                                    "nFK_3040", "nFK_4050", "nFK_5060") ))
+```
+
+```{r, fig.width=4, fig.height=6}
+ggplot(result) +
+    geom_area(aes(x = Tage_seit_Aussaat, y = 60), fill = "grey90") + 
+    geom_line(aes(Tage_seit_Aussaat, measured), col = "black") + 
+    geom_line(aes(Tage_seit_Aussaat, predicted), col = "red") + 
+    ylab("nFK (%)") + 
+    facet_grid(depth~.) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank(), aspect.ratio = 1/4)
+```
+
+# ANNI Für jeden Tag einzeln hintereinander im Loop ausführen:
+```{r}
+pred2 <- matrix(ncol = 6, nrow = nrow(satz_x)+1)
+satz_target_init <- matrix(ncol = 6, nrow = nrow(satz_x)+1) #Leere nfk und ersten Tag füllen. Bei Praxis dann mit 100%
+satz_target_init[1,] <- satz_target[1,]
+    
+for (i in 1:nrow(satz_x)){
+new_model %>% evaluate(matrix(nrow = 1, satz_x[i,]), matrix(nrow = 1, satz_target_init[i,]))
+pred2[i,] <- new_model %>% predict(matrix(nrow = 1, satz_x[i,]))
+satz_target_init[i+1,] <-  pred2[i,]
+}
+
+satz_target_init <- satz_target_init[-1,]
+```
+
+```{r}
+x2 <- satz_target %>% as.data.frame() %>% 
+    mutate(Tage_seit_Aussaat = data[idx_einSatz,13]) %>% #Spalte 13 ist DAS
+    tidyr::pivot_longer(cols = -Tage_seit_Aussaat, values_to = "measured", names_to = "depth")
+
+y2 <- pred2[-1,] %>% as.data.frame() %>% 
+    tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>% select(predicted)
+
+result <- bind_cols(x2, y2) %>% 
+    mutate_at("depth", 
+              ~factor(., labels = c("nFK_0010", "nFK_1020", "nFK_2030", 
+                                    "nFK_3040", "nFK_4050", "nFK_5060") ))
+```
+
+```{r, fig.width=4, fig.height=6}
+ggplot(result) +
+    geom_area(aes(x = Tage_seit_Aussaat, y = 60), fill = "grey90") + 
+    geom_line(aes(Tage_seit_Aussaat, measured), col = "black") + 
+    geom_line(aes(Tage_seit_Aussaat, predicted), col = "red") + 
+    ylab("nFK (%)") + 
+    facet_grid(depth~.) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank(), aspect.ratio = 1/4)
+```
+
+
+
+
+
 
