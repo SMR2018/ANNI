@@ -1,0 +1,39 @@
+---
+title: "Rendern von ANNI-Ergebnissen"
+date: "2023-04-24"
+---
+
+## Allgemeine Infos: Pfad zum Modell und Skalierungs-Daten
+```{r}
+scaling_data_path <-  "../../data/derived_data/Model2/scaling_data.csv"
+filepath_tf <-  "../../data/derived_data/Model2/ANNI_Tensorflow_20230420"
+```
+
+# Rendern startet hier:
+
+## Haas: Rosengarten 
+```{r}
+betrieb = "Haas"
+feld <- "Rosengarten"
+satz <- 1
+name1 <- paste("Fa", betrieb, "Feld", feld, "Satz", satz, sep = "_")
+wetter_anbau_daten_csv <-  "../../data/derived_data/Wetterdaten_Praxis/Rosengarten_id_Worms/daten_komplett.csv"
+
+rmarkdown::render(quiet = TRUE, clean = F,
+                  input = paste0(rstudioapi::getActiveProject(),
+                                 "/analysis/Praxis_Echtdaten/ANNI_anwenden_Praxis.Rmd"),  
+                  output_file = paste0(name1, ".pdf"), 
+                  params = list(
+                      betrieb = betrieb,
+                      feld = feld,
+                      satz= satz,
+                      filepath_tf=filepath_tf,
+                      scaling_data_path=scaling_data_path,
+                      wetter_anbau_daten_csv=wetter_anbau_daten_csv)
+)
+```
+
+```{r}
+
+```
+
