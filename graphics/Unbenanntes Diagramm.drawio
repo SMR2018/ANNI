@@ -1,43 +1,134 @@
-<mxfile host="app.diagrams.net" modified="2023-06-07T10:38:28.414Z" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" etag="tG6TPUxYrGmtkOngW7dl" version="21.3.7" type="github">
+<mxfile host="app.diagrams.net" modified="2023-06-07T10:50:16.195Z" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" etag="k-izbZNV7hD1uHVweief" version="21.3.7" type="github">
   <diagram name="Seite-1" id="srk_kNZ298-WKb-UGRPL">
-    <mxGraphModel dx="984" dy="607" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+    <mxGraphModel dx="1863" dy="639" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-1" target="sZ_1qn_T3DuW1jLiiuC9-2">
+        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-1" target="sZ_1qn_T3DuW1jLiiuC9-2" edge="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-8" target="sZ_1qn_T3DuW1jLiiuC9-4">
+        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-8" target="sZ_1qn_T3DuW1jLiiuC9-4" edge="1">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="350" y="450" />
+              <mxPoint x="350" y="430" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-1" value="Satelliten-Daten&lt;br&gt;(z.B. Sentinel 2)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-1" value="Satelliten-Daten&lt;br&gt;(z.B. Sentinel 2)" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="120" y="160" width="120" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-2" value="Bestandes-Informationen" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="120" y="400" width="120" height="60" as="geometry" />
-        </mxCell>
-        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-4" value="Bodeninformationen" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="300" y="400" width="120" height="60" as="geometry" />
-        </mxCell>
-        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.25;entryDx=0;entryDy=0;" edge="1" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-5" target="sZ_1qn_T3DuW1jLiiuC9-4">
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-23" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-2" target="XBK9ZFjaAwAA2WwoCuQN-19">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-5" value="Bodenschätzkarten der Länder" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-2" value="Bestandes-Informationen" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+          <mxGeometry x="120" y="585" width="120" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-4" target="sZ_1qn_T3DuW1jLiiuC9-2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="470" y="615" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-4" value="Bodeninformationen" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+          <mxGeometry x="410" y="400" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.25;entryDx=0;entryDy=0;" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-5" target="sZ_1qn_T3DuW1jLiiuC9-4" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="550" y="415" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-5" value="Bodenschätzkarten der Länder" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="460" y="160" width="120" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-1" target="sZ_1qn_T3DuW1jLiiuC9-8">
+        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" parent="1" source="sZ_1qn_T3DuW1jLiiuC9-1" target="sZ_1qn_T3DuW1jLiiuC9-8" edge="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="240" y="210" as="sourcePoint" />
             <mxPoint x="460" y="300" as="targetPoint" />
             <Array as="points" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-8" value="Textur-Modell (z.B. Gasmi et al. 2022)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+        <mxCell id="sZ_1qn_T3DuW1jLiiuC9-8" value="Textur-Modell (z.B. Gasmi et al. 2022)" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="280" y="270" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="XBK9ZFjaAwAA2WwoCuQN-1" target="sZ_1qn_T3DuW1jLiiuC9-4">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="630" y="430" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-1" value="Textur-Messung &lt;br&gt;(z.B. Geophilus)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="590" y="160" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="XBK9ZFjaAwAA2WwoCuQN-3" target="XBK9ZFjaAwAA2WwoCuQN-6">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="-80" y="230" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="-200" y="270" />
+              <mxPoint x="-130" y="270" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.433;entryY=-0.05;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="XBK9ZFjaAwAA2WwoCuQN-3" target="XBK9ZFjaAwAA2WwoCuQN-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-3" value="Wetter-Daten" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-280" y="150" width="120" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="XBK9ZFjaAwAA2WwoCuQN-4" target="sZ_1qn_T3DuW1jLiiuC9-2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="-210" y="610" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-4" value="Historie + aktuell (DWD)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-330" y="320" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-6" value="Prognose (openweathermap.org)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-200" y="320" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-8" value="Praxis-Daten historisch" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-30" y="150" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-9" value="Aussat-Termin" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-30" y="250" width="120" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-10" value="Dokumentierte Düngung" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-30" y="280" width="120" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-11" value="Dokumentierte Bewässerung" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-30" y="310" width="120" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-17" value="Historie" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="660" width="120" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-18" value="aktuell" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="700" width="120" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-19" value="Prognose" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="850" width="120" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-20" value="Kultur" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-30" y="220" width="120" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-21" value="falls vorhanden: Bodenfeuchte (Tensio etc) aus Versuchen" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-30" y="340" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="XBK9ZFjaAwAA2WwoCuQN-22" target="XBK9ZFjaAwAA2WwoCuQN-19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-22" value="Klima-Modelle" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="-120" y="835" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-26" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="XBK9ZFjaAwAA2WwoCuQN-25" target="XBK9ZFjaAwAA2WwoCuQN-19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="XBK9ZFjaAwAA2WwoCuQN-25" value="KWB" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="330" y="835" width="120" height="60" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
