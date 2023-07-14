@@ -1,0 +1,266 @@
+---
+title: "Wetterdaten zusammenstellen: Historie + Prognose, Cumsums berechnen, VIs berechnen"
+author: "Samantha Rubo"
+date: "2023-05-15"
+params:
+  schlag: "Mittelgewann"
+  lat: 49.6025744
+  lon: 8.3598389
+  datum_aussaat: "2023-03-01"
+  Ton_prozent: 15
+  Schluff_prozent: 25s
+  Sand_prozent: 60
+  C_org_prozent: 1.2
+---
+
+```{r}
+options(knitr.duplicate.label = "allow")
+```
+
+```{r, eval=FALSE}
+# params <- list(schlag= "Stichelpfad",
+#                  lat= 49.59097,
+#                  lon= 8.33063,
+#                  datum_aussaat= "2023-04-18",
+#                  Ton_prozent= 19.5,
+#                  Schluff_prozent= 36,
+#                  Sand_prozent= 44.5,
+#                  C_org_prozent= 1.2)
+
+# params <- list(schlag= "Kämmerwiese",
+#                  lat= 49.65025,
+#                  lon= 8.42026,
+#                  datum_aussaat= "2023-04-27",
+#                  Ton_prozent= 46.5,
+#                  Schluff_prozent= 35.5,
+#                  Sand_prozent= 18,
+#                  C_org_prozent= 1.2)
+```
+
+#Pakete laden:
+```{r, message=FALSE}
+library(data.table)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(stringr)
+```
+
+#Historie der Wetterdaten von DWD laden: Vier einzelen Dateien für Klima, Solar, Wind, und Luftfeuchtigkeit
+```{r}
+rmarkdown::render(input = "Wetterdaten_Praxisschlag_beziehen.Rmd",
+                  params = list(schlag = params$schlag, lat = params$lat, lon = params$lon))
+```
+
+# Wetter-Prognose von openweathermap.org laden
+```{r}
+rmarkdown::render(input = "Wetterprognose_API.Rmd",
+                  params = list(schlag = params$schlag, lat = params$lat, lon = params$lon))
+```
+
+## Erstellte Dateien:
+```{r}
+path_derived_data <- paste0("../../data/derived_data/Wetterdaten_Praxis/", params$schlag)
+file_list <- list.files(path_derived_data)
+file_list
+```
+
+
+#Klima-Daten neu einlesen:
+```{r}
+klima <- fread(paste0(path_derived_data, "/klima.csv"), colClasses = c("Date", rep("numeric",times = 4))) 
+
+solar <- fread(paste0(path_derived_data, "/solar.csv"), colClasses = c("Date", rep("numeric",times = 1)))
+
+luftfeuchte <- fread(paste0(path_derived_data, "/luftfeuchte.csv"), colClasses = c("Date", rep("numeric",times = 3)))
+
+wind <- fread(paste0(path_derived_data, "/wind.csv"), colClasses = c("Date", rep("numeric",times = 1)))
+
+df <- klima %>% 
+    left_join(solar, by = "datum") %>% 
+    left_join(luftfeuchte, by = "datum") %>%
+    left_join(wind, by = "datum")
+
+rm(klima, solar,luftfeuchte,wind)
+```
+## Zeitraum filter: ab Aussaat
+```{r}
+datum_aussaat <- as_date(params$datum_aussaat)
+df <- df %>% filter(datum >= datum_aussaat)
+```
+
+
+## Mit Prognose-Daten erweitern:
+```{r}
+#prognose_file
+prognose_file_aktuell <- sort(file_list[str_detect(file_list,"Prognose")], decreasing = T)[1]
+prognose <- fread(paste0(path_derived_data, "/", prognose_file_aktuell)) %>%
+    mutate_at("datum", ~as.Date(.))
+
+## Globalstrahlung der Prognose erweitern um Mittelwert der letzten drei Tage
+gs_mean <- df %>% slice((n()-2):n()) %>% pull(globalstrahlung_Wh_m2) %>% mean(., na.rm = T)
+prognose <- prognose %>% mutate(globalstrahlung_Wh_m2 = gs_mean)
+
+
+df_zusammen <- bind_rows(df, select(prognose, -tag_prognose))
+```
+
+## Bodeninformationen anfügen
+```{r}
+df_zusammen <- df_zusammen %>% 
+    mutate(
+        tage_seit_aussaat = 1:n(),
+        Ton_prozent = params$Ton_prozent,
+        Schluff_prozent = params$Schluff_prozent,
+        Sand_prozent = params$Sand_prozent,
+        C_org_prozent = params$C_org_prozent)
+```
+#Vortages-Werte einfügen:
+```{r}
+df_zusammen<- df_zusammen %>% 
+    mutate(
+        nFK_0010_Vortag = NA,
+        nFK_1020_Vortag = NA,
+        nFK_2030_Vortag = NA,
+        nFK_3040_Vortag = NA,
+        nFK_4050_Vortag = NA,
+        nFK_5060_Vortag = NA,
+        wasser_input_Vortag = c(0, wasser_input_mm[-n()])) %>%
+    mutate(across(starts_with("nFK"), ~ifelse(tage_seit_aussaat == 1, 100, NA)))
+```
+
+
+
+#Welche PArameter fehlen noch?
+```{r}
+data0 <- fread("../../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv", nrows = 1)
+idx <- as.numeric(na.omit(match(names(df_zusammen), names(data0))))
+names(data0)[-idx]
+```
+
+
+
+
+# fuer Tempsum: untere und obere Grenze der Temperatur berücksichtigen (5 und 25 °C) und neue Tagesmittelwerte berechnen
+```{r}
+Greznwert_temp <- 9.1
+#Angenommen, der Spinat wächst erst ab 9.1°C???
+
+df_zusammen <- df_zusammen %>%
+    mutate(Tmean_th9_25_gradC = ifelse(Tmean_gradC > 25, 25,Tmean_gradC), .after = "Tmean_gradC") %>%
+    mutate_at("Tmean_th9_25_gradC", ~ifelse(.<Greznwert_temp,0,.))
+
+```
+
+#Wetter-Daten einlesen und Tageslicht-Stunden anfügen:
+```{r}
+source("../../../GeoSenSys2020/Eigene_Funktionen/Lichter_Tag.R")
+df_zusammen <- df_zusammen %>%
+    #Wetter-Daten einlesen und Tageslicht-Stunden anfügen:
+    mutate(tageslicht_h = lichter_tag(datum = datum, lat = params$lat, lon = params$lon)) %>% #Geisenheim
+    mutate(tageslicht_h_th9 = ifelse(Tmean_gradC < Greznwert_temp,0,tageslicht_h))
+```
+
+
+#Cumsums sei Aussaat bilden:
+```{r}
+df_zusammen <- df_zusammen %>%
+    mutate(niederschlag_mm = wasser_input_mm) %>%
+    #Cumsum einiger Parameter anfügen: 
+    mutate(across(.cols = c(Tmean_gradC, Tmean_th9_25_gradC ,globalstrahlung_Wh_m2,
+                            niederschlag_mm, tageslicht_h, tageslicht_h_th9), 
+                  .fns = list(sum = cumsum))) %>%
+    select(-niederschlag_mm)
+```
+
+
+#Ibi und Irmi berechnen, falls nicht gemessen:
+Ibi und irmi sind maßgeblich abhängig von: von dem Zeitpunkt seit Auflaufen (DAE = days after emergence) und den Tageslichsummen seit Auflaufen mit einem Filter von 9°C Tagesmitteltemperatur
+Die DAE kann mit einem logisitschen Modell mit Temperatursummen berechnet werden (vgl. Auswertung "ISARIA_Analyse_DLR.Rmd") :
+Hinweis: die Asymtote muss um 5 Tage erhöht werden, da das Modell durch 0 geht, und der Minimale DAE = 5 war.
+
+Formula: das ~ SSlogis(Tmean_th9_25_gradC, L, x0, k) 
+
+Parameters:
+   Estimate Std. Error t value Pr(>|t|)    
+L    10.902      1.030  10.586 0.000130 *** 
+x0   12.986      1.221  10.635 0.000127 ***
+k    -2.268      1.043  -2.176 0.081573 .  
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 1.353 on 5 degrees of freedom
+
+Number of iterations to convergence: 1 
+Achieved convergence tolerance: 3.895e-06
+
+#DAE berechnen:
+```{r}
+ymin = 5 #nls um 5 nach oben schieben (minimalwert bei fitting geht durch 0)
+
+df_zusammen <- df_zusammen %>%
+    mutate(dae_geschaetzt = 14/(1 + exp((11 - Tmean_th9_25_gradC)/-3)), .after = "datum") %>% 
+    #Modell händisch angepasst (da wenige Daten)
+    #nicht Tmean_th9_25_gradC_sum, sondern tages mittelwert!, da fitting auf mittelwerten (namen dabei nicht angepasst)
+    mutate(across("dae_geschaetzt", ~ceiling(.+ymin))) %>%
+    #Mittelwerte der geschätzen DAE seit Aussaat:
+    mutate(dae_geschaetzt_mittel = cumsum(dae_geschaetzt) / tage_seit_aussaat, .after = "dae_geschaetzt") %>%
+    #select(datum, tage_seit_aussaat, dae_geschaetzt, dae_geschaetzt_mittel) %>%
+    mutate(dae_erreicht = ifelse(dae_geschaetzt_mittel < tage_seit_aussaat, 1, 0)) %>%
+    mutate(dae = cumsum(dae_erreicht))
+```
+
+
+
+## IBI und IRMI berechnen:
+```{r}
+#ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_sum_dae)/63.903)) 
+#irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_sum_dae)/224.165))
+
+df_zusammen <- df_zusammen %>%
+    ## tageslicht_h_th9_sum_dae berechnen:
+    mutate(tageslicht_h_th9_sum_dae = cumsum(ifelse(dae > 0, tageslicht_h_th9, 0))) %>%
+    mutate(ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_sum_dae)/63.903)),
+           irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_sum_dae)/224.165)))
+
+```
+
+## Alles auf 2 Nachkommastellen runden:
+```{r}
+df_zusammen <- df_zusammen %>%
+    mutate(across(everything(), ~round(.,2)))
+```
+
+
+# Spalten in Reihenfolge für ANNI auswählen:
+```{r}
+names1 <- names(data0)[-c(1:6)]
+data_praxis <- df_zusammen %>% select(all_of(names1))
+```
+
+```{r}
+fwrite(data_praxis, paste0(path_derived_data, "/daten_komplett.csv"))
+```
+
+
+## Durchwurzelte Schicht modellieren auf Grundlage von IBI-Verlauf
+Spinat: 0-40 cm
+```{r}
+#library(plyr)
+df_wurzel <- df_zusammen %>% 
+    mutate(durchwurzelte_schicht_cm =  40/(1 + exp((198.135 - tageslicht_h_th9_sum_dae)/63.903))) %>%
+    mutate_at("durchwurzelte_schicht_cm", ~round(., 1)) %>%
+    mutate(durchwurzelte_schicht_10cm = plyr::round_any(durchwurzelte_schicht_cm, 10, f = ceiling)) %>% #auf 10-Stelle runden
+    select(tage_seit_aussaat, durchwurzelte_schicht_cm, durchwurzelte_schicht_10cm)
+#df_wurzel
+# ggplot(df_wurzel, aes(tage_seit_aussaat, durchwurzelte_schicht_cm)) +
+#     geom_point() + 
+#     geom_path(aes(y = durchwurzelte_schicht_10cm, col = "10cm"))
+
+```
+
+```{r}
+fwrite(df_wurzel, paste0(path_derived_data, "/durchwurzelte_schicht.csv"))
+```
