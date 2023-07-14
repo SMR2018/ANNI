@@ -1,0 +1,277 @@
+---
+title: "Wetterdaten Praxisschlag beziehen"
+# params:
+#   schlag: "Mittelgewann"
+#   lat: 49.6025744
+#   lon: 8.3598389
+---
+
+#Pakete laden:
+```{r, message=FALSE}
+library(data.table)
+library(rdwd) ## Paket fuer DWD-Daten-Import!
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(stringr)
+```
+
+
+
+# Koordinaten der Schläge in WGS84
+```{r}
+schlag <- params$schlag
+path_derived_data <- paste0("~/Documents/Mac_Github/ANNI/data/derived_data/Wetterdaten_Praxis/", schlag)
+if(!exists(path_derived_data)) {dir.create(path_derived_data)}
+
+lat = params$lat
+lon = params$lon
+```
+
+
+```{r}
+stations_kl <- rdwd::nearbyStations(lat = lat, lon = lon, radius = 30, var = "kl", per = "recent", res = "daily")
+#stations_kl
+stations_solar <- rdwd::nearbyStations(lat = lat, lon = lon, radius = 100, var = "solar", per = "recent", res = "10_minutes")
+#stations_solar
+stations_moist <- rdwd::nearbyStations(lat = lat, lon = lon, radius = 30, var = "moisture", per = "recent", res = "subdaily")
+#stations_moist
+stations_wind <- rdwd::nearbyStations(lat = lat, lon = lon, radius = 30, var = "wind", per = "recent", res = "10_minutes")
+#stations_wind
+
+#nächste Station: Worms, Stations_id = 5692
+id_kl <- stations_kl$Stations_id[2]# 5692#Worms
+id_solar <- stations_solar$Stations_id[2]
+id_moist <- stations_moist$Stations_id[2]
+id_wind <- stations_wind$Stations_id[2]
+```
+
+
+## Wetterdaten (unter Ordner "kl" = Klima) 
+Hier überspringen. Bereits einmal ausgeführt und Daten gespeichert.
+```{r eval=T, include=TRUE}
+#Select data from the DWD CDC FTP Server
+link <- selectDWD(id = id_kl, #Worms
+                  res="daily", var="kl", per="recent", current=FALSE, meta = FALSE)
+
+#Process data from the DWD CDC FTP Server to a data.frame
+clim <- dataDWD(url = link, read=TRUE, 
+                dir = tempdir(), 
+                quiet=TRUE, force=NA) %>%
+    filter(MESS_DATUM >= as_date("2023-01-01"))
+
+```
+
+
+#passende Parameter auswählen:
+```{r, eval=T}
+clim_filtered <- clim %>% 
+    dplyr::select(datum = MESS_DATUM,
+                  Tmean_gradC = TMK,
+                  Tmin_gradC = TNK,
+                  Tmax_gradC =TXK,
+                  #relLuftfeuchte_mean_prozent = UPM, # aus eigener Datei unten
+                  #niederschlag_mm_sum = RSK, ##herausnehmen für ANNI?? 
+                  wasser_input_mm = RSK#, ##stattdessen Parameter hinzugefügt für ANNI?? 
+    ) %>%
+    mutate_at("datum", ~as_date(.))
+
+rm(clim)
+```
+
+#Daten speichern:
+```{r}
+fwrite(clim_filtered, paste0(path_derived_data, "/klima.csv"))
+```
+
+
+# GLOBALSTRAHLUNG
+
+## Globalstrahlung (unter Ordner "solar") 
+Die Einheit der Daten ist J/cm²
+Hier überspringen. Bereits einmal ausgeführt und Daten gespeichert.
+```{r eval=T, include=TRUE, max.print = 10}
+#Select data from the DWD CDC FTP Server
+link <- selectDWD(id = id_solar,
+                  res="10_minutes", var="solar", per="recent", current=FALSE, meta = FALSE)
+
+solar2 <- dataDWD(url = link, read=TRUE,
+                  dir =  tempdir(),
+                  quiet=TRUE, force=NA) %>% 
+    filter(MESS_DATUM >= as_datetime("2023-01-01", tz = "UTC") %>% as.numeric) %>%
+    #DWD Zeitzone ist immer UTC, nicht Europe/Berlin!!
+    mutate_at("GS_10", ~ifelse(.<= -998,NA,.))
+```
+
+#Einzelne Tabellen bereinigen: 
+mit NA-gefüllte Tage entfernen
+Tage mit weniger als der Hälfte der Einträge löschen
+alles auf 10-Minuten Intervalle korrigieren
+Sonnenauf- und Unergang mit GS_10 = 0 hinzufügen
+Fehlende Werte approximieren (interpolieren)
+
+```{r}
+#Anzahl Beobachtungen an einem Tag bei 10-Min Intervall
+anz <- 60/10 * 24 #144 Beobachtungen
+
+#Funktion: 10 Minuten Intervall erzwingen. Nacht-Werte = 0 anfuegen und fehlende WErte löschen / interpolaieren
+tidy_solar_df <- solar2 %>%
+    mutate_at("GS_10", ~ifelse(. == -999, NA, .)) %>% 
+    
+    #Fehlende Werte entfernen:
+    filter(!is.na(GS_10)) %>%
+
+    #nicht alle Daten sind in 10-Minuten-Incrementen. Hier auffüllen, um später Tages-Summe korrekt zu bilden
+    complete(MESS_DATUM = seq.POSIXt(min(MESS_DATUM), max(MESS_DATUM), by="10 min")) %>%
+    
+    arrange(MESS_DATUM) %>% 
+    mutate(datum = as.Date(MESS_DATUM),
+           stunde = hour(MESS_DATUM)) %>% 
+    
+    # Hälfte der Einträge am Tag müssen vorhanden sein, sonst Tag löschen:
+    group_by(datum) %>%
+    mutate(n = sum(!is.na(GS_10), na.rm=TRUE)) %>%
+    ## jetzt sollte alles in 10 Minuten-Abständen sein!
+    
+    filter(n > anz/2) %>% 
+
+        #Fehlende Werte approximieren
+    group_by(datum) %>%
+    mutate_at("GS_10", ~round(zoo::na.approx(.,  na.rm=FALSE, rule = 2),1))
+```
+
+# Aufsummieren der 10-Minuten-Intervalle Globalstrahlung und Konvertierung in Wh m-2: Tagessumme GS
+Daten sind in J cm-2 == Ws cm-2, da
+1 W = 1 J/s
+Konvertieren in Wh m-2 --> Ws cm-2  /  (60*60)  * 10000
+
+```{r}
+zeit_intervall <- 60*60 # 1 Stunde?
+cm2 <- 100*100
+
+solar_daily <- tidy_solar_df %>% group_by(datum) %>% 
+    summarise(globalstrahlung_Wh_m2 = round(sum(GS_10 / zeit_intervall , na.rm = TRUE) * cm2, 1)) %>%
+    filter(globalstrahlung_Wh_m2 != 0)
+
+
+```
+
+#Daten speichern:
+```{r}
+fwrite(solar_daily, paste0(path_derived_data, "/solar.csv"))
+```
+
+
+#LUFTFEUCHTIGKEIT
+
+## Luftfeuchtigkeit (unter Ordner "moisture") 
+Die Einheit der Daten ist %
+Hier überspringen. Bereits einmal ausgeführt und Daten gespeichert.
+```{r eval=T, include=TRUE, max.print = 10}
+#Select data from the DWD CDC FTP Server
+link <- selectDWD(id = id_moist, 
+                  res="subdaily", var="moisture", per="recent", current=FALSE, meta = FALSE)
+
+#Download data from the DWD CDC FTP Server uncomment to load!
+df <- dataDWD(url = link, read=TRUE,
+                dir = tempdir(),
+                quiet=TRUE, force=NA) %>% 
+    select(MESS_DATUM,RF_TER) %>%
+    filter(MESS_DATUM >= as_datetime("2023-01-01"))
+```
+
+
+#Daten bereinigen und nach Datum filtern:
+```{r}
+df_filtered <- df %>% ungroup() %>%
+    mutate_at("RF_TER", ~ifelse(. == -999, NA, .)) %>% 
+    
+    #Fehlende Werte entfernen:
+    filter(!is.na(RF_TER)) %>%
+    mutate(datum = as.Date(MESS_DATUM)) 
+
+```
+
+
+#Tages-Mittelwerte bilden
+```{r}
+df_tagesmittel <-  df_filtered %>%
+    #Nur vorhandene datum auffüllen! (Um leere Werte aus Jahren ohne Messungen zu vermeiden)
+    ungroup() %>%
+    complete(MESS_DATUM = seq.POSIXt(min(MESS_DATUM), 
+                                     max(MESS_DATUM), 
+                                     by="1 hour")) %>%
+    mutate_at("RF_TER", ~round(zoo::na.approx(.,  na.rm=FALSE, rule = 2),1)) %>%
+    group_by(datum) %>%
+    summarise(relLuftfeuchte_mean_prozent = mean(x = RF_TER),
+              relLuftfeuchte_min_prozent = min(RF_TER),
+              relLuftfeuchte_max_prozent = max(RF_TER), .groups = "drop") %>%
+    mutate_if(is.numeric, ~round(., 1)) 
+```
+
+#Daten speichern:
+```{r}
+fwrite(df_tagesmittel, paste0(path_derived_data, "/luftfeuchte.csv"))
+```
+
+
+
+
+
+
+# WIND
+
+## Wind (unter Ordner "wind") 
+```{r eval=T, include=TRUE, max.print = 10}
+#Select data from the DWD CDC FTP Server
+link <- selectDWD(id = id_wind, 
+                  res="10_minutes", var="wind", per="recent", current=FALSE, meta = FALSE)
+
+#Download data from the DWD CDC FTP Server uncomment to load!
+df <- dataDWD(url = link, read=TRUE,
+                dir = tempdir(),
+                quiet=TRUE, force=NA) %>%
+    select(MESS_DATUM, FF_10) %>%
+    filter(MESS_DATUM >= as_datetime("2023-01-01"))
+```
+
+
+#Daten bereinigen und nach Datum filtern:
+```{r}
+df_filtered <- df %>% ungroup() %>%
+    mutate_at("FF_10", ~ifelse(. == -999, NA, .)) %>% 
+    
+    #Fehlende Werte entfernen:
+    filter(!is.na(FF_10)) %>%
+    mutate(datum = as.Date(MESS_DATUM)) 
+
+```
+
+
+#Tages-Mittelwerte bilden
+```{r}
+df_tagesmittel <-  df_filtered %>%
+    #Nur vorhandene datum auffüllen! (Um leere Werte aus Jahren ohne Messungen zu vermeiden)
+    ungroup() %>%
+    group_by(datum) %>%
+    summarise(windgeschwindigkeit_m_s = mean(FF_10, na.rm = T), .groups = "drop") %>%
+    mutate_if(is.numeric, ~round(., 1)) 
+```
+
+#Daten speichern:
+```{r}
+fwrite(df_tagesmittel, paste0(path_derived_data, "/wind.csv"))
+```
+
+
+
+
+
+
+
+
+
+
+
