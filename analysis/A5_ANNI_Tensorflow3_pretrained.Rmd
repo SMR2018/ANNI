@@ -1,0 +1,294 @@
+---
+title: "ANNI in Tensorflow: pretrained Model mit langjährigen Wetterdaten"
+author: "Samantha Rubo"
+date: "2023-05-03"
+---
+
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(ggplot2)
+library(data.table)
+library(purrr)
+```
+
+
+### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+```{r}
+rm(list = ls())
+## Versuchsdaten:
+data0 <- data.table::fread(
+    #"../data/derived_data/input_tabelle_2020_2022_20230523_complete.csv",
+    # "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
+    "../data/derived_data/input_tabelle_2020_2022_20230524_25cm_complete.csv",
+    sep = ";", dec = ".") %>% as_tibble()
+
+
+#DWD-Daten:
+# file_list <- list.files("../../DWD_database_ANNI2/data/derived_data/DWD_data/",
+#                         pattern = "alle_stationsdaten_zusammen", full.names = T)
+# data1 <- map_df(file_list, ~fread(.))
+```
+
+#Aufzufüllende Werte:
+```{r, eval=FALSE}
+# data0 %>% dplyr::filter(between(irmi, 16,18)) %>%
+#     summarise_all(median)
+# data0 %>% #dplyr::filter(between(irmi, 16,18)) %>%
+#     summarise_all(median)
+data.frame(x = names(data0),
+           y = c(names(data1), rep("nn", times = 10)),
+           z = names(data_zusammen))
+
+```
+
+
+```{r}
+data_zusammen <- data0
+
+#data_zusammen <- bind_rows(data0, data1)
+
+data_zusammen <- 
+    data_zusammen %>% 
+    mutate(across(everything(),
+                  ~ifelse(is.na(.), mean(., na.rm = T), .))
+    ) %>% 
+    filter(if_all(starts_with("nFK"), ~ .x > 30)) #nur nFK über 30% einbeziehen? Extremwerte könnten verfälschen
+```
+
+
+#ANNI: 
+#Matrix mit y (Bodenfeuchte pro Schicht: "nFK_0010" bis "nFK_5060)
+#und x (Wetterdaten, Bodenfeuchte pro Schicht des Vortages, Tage seit Aussaat) 
+Tage seit Aussaat ändern in Tage seit Auflaufen??
+```{r}
+data <- data_zusammen %>% mutate_all(as.numeric)
+data <- as.matrix(data)
+dimnames(data) <- NULL
+set.seed(123)
+ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
+
+#X definieren:
+#Ab Spalte 7
+max_nr <- 3 #6 bei 10 ch Schritten
+idx_x <- (max_nr+1):ncol(data)
+training <- data[ind==1,idx_x]
+test <- data[ind==2, idx_x]
+
+#Target definieren:
+#erste 6 Spalten sind Y-Werte (nFK 0 - 60 cm)
+idx_y <- 1:max_nr
+trainingtarget <- data[ind==1, idx_y] 
+testtarget <- data[ind==2, idx_y]
+
+str(trainingtarget)
+str(testtarget)
+```
+
+
+#Daten skalieren. 
+Später neue Daten anhand dieser Werte skalieren
+```{r}
+m <- colMeans(data0[,idx_x]) #colMeans(training) ## standardisieren auf Versuchsdaten, wegen ISARIA-Varianz
+s <- apply(data0[,idx_x], 2, sd, na.rm=TRUE) #apply(training, 2, sd, na.rm=TRUE)
+s <- ifelse(s == 0, 1, s)
+training <- scale(training, center = m, scale = s)
+test <- scale(test, center = m, scale = s)
+```
+
+#Skalierungs-Daten speichern für Skalierung neuer Input-Daten in der Anwendung
+```{r}
+scaling_data <- data.frame(m=m, s=s)
+fwrite(scaling_data, file = "../data/derived_data/scaling_data_addedVIs_20230524.csv")
+#"../data/derived_data/scaling_data_allDWD_pretrained.csv"
+```
+
+
+#Keras initiieren: Input-Layer und Output-Layer definieren
+#A ) Sequential Model
+```{r, eval=FALSE}
+model <- keras_model_sequential()
+
+#Modell weiter anpassen:
+#Lernrate ändern, etc.
+# model %>%
+#     layer_dense(units = 100, activation = 'sigmoid', input_shape = c(length(idx_x))) %>%
+#     layer_dropout(rate=0.4)  %>%
+#     layer_dense(units = 50, activation = 'sigmoid')  %>%
+#     layer_dropout(rate=0.2)  %>%
+#     layer_dense(units = length(idx_y))
+
+model %>%
+    layer_dense(units = 31*3, activation = 'sigmoid', input_shape = c(length(idx_x))) %>%
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 31*2, activation = 'sigmoid') %>%
+    layer_dropout(rate=0.1)  %>%
+    layer_dense(units = length(idx_y))
+
+#Loss-Function beschreiben
+model %>% compile(
+    optimizer = 'Adam',#"Adam",#'rmsprop',
+    loss = 'mse',
+    metrics = c('mae', 'accuracy')
+)
+
+# in Python:
+# model.compile(
+# optimizer=tf.optimizers.Adam(learning_rate=0.1),
+# loss='mean_absolute_error' #squared
+# )
+# model.compile(optimizer='RMSprop',
+# loss='mse',
+# metrics=['mae'])
+```
+
+#B) Functional Model:
+```{r, eval=TRUE}
+inputs <- layer_input(shape = c(length(idx_x)))
+
+# outputs compose input + dense layers
+# predictions <- inputs %>%
+#     layer_dense(units = 100, activation = 'sigmoid') %>%
+#     layer_dropout(rate=0.4)  %>%
+#     layer_dense(units = 50, activation = 'sigmoid') %>%
+#     # layer_dropout(rate=0.1)  %>%
+#     # layer_dense(units = 50, activation = 'sigmoid') %>%
+#     layer_dropout(rate=0.2)  %>%
+#     layer_dense(units = length(idx_y))
+
+predictions <- inputs %>%
+    layer_dense(units = 128, activation = 'sigmoid') %>%
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 64, activation = 'sigmoid') %>%
+    layer_dropout(rate=0.1)  %>%
+    # layer_dense(units = 32, activation = 'sigmoid') %>%
+    # layer_dropout(rate=0.1)  %>%
+    layer_dense(units = length(idx_y))
+
+# create model
+model <- keras_model(inputs = inputs, outputs = predictions)
+
+# compile model
+model %>% compile(
+    optimizer = 'rmsprop',#"Adam",#'rmsprop',
+    loss = 'mse',
+    metrics = c('mae', 'accuracy')
+    #metrics = c('mae')
+)
+```
+
+#Model trainieren:
+```{r, message=FALSE}
+earlystopping = callback_early_stopping(monitor = "loss", 
+                                        min_delta = 1,
+                                        patience = 5,
+                                        mode = "min", 
+                                        restore_best_weights = TRUE                                            
+)
+
+model %>%          
+    fit(training,trainingtarget, 
+        epochs = 256,
+        batch_size = 32*1,  #klappt:32*0.5,
+        validation_split = 0.2, 
+        callbacks = earlystopping#,
+        #verbose = FALSE
+    )
+```
+
+#Model evaluieren:
+```{r}
+#Modell für alle Daten ausführen
+model %>% evaluate(test, testtarget)
+pred <- model %>% predict(test)
+
+#Modell für Versuchdaten ausführen
+test_vesuchsdaten <- scale(data0[,idx_x], center = m, scale = s) 
+testtarget_versuchsdaten <- data0[,idx_y] %>% as.matrix()
+model %>% evaluate(test_vesuchsdaten, testtarget_versuchsdaten)
+pred_versuchsdaten <- model %>% predict(test_vesuchsdaten)
+
+mean((testtarget-pred)^2) 
+```
+
+#Ergebnis plotten:
+```{r}
+#Alle Daten
+x1 <- testtarget %>% as.data.frame() %>% 
+    tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
+
+y1 <- pred %>% as.data.frame() %>% 
+    tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>% 
+    select(predicted)
+
+#Versuchdaten
+x2 <- testtarget_versuchsdaten %>% as.data.frame() %>% 
+    tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
+
+y2 <-  pred_versuchsdaten %>% as.data.frame() %>% 
+    tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>%
+    select(predicted)
+
+
+result <- bind_cols(x1, y1) %>% 
+    mutate_at("depth", 
+              ~factor(., labels = c("nFK_0010_change", "nFK_1020_change", "nFK_2030_change"#, 
+                                    #"nFK_3040_change", "nFK_4050_change", "nFK_5060_change"
+              ) ))
+
+result2 <- bind_cols(x2, y2) %>% 
+    mutate_at("depth", 
+              ~factor(., labels = c("nFK_0010_change", "nFK_1020_change", "nFK_2030_change"#, 
+                                    #"nFK_3040_change", "nFK_4050_change", "nFK_5060_change"
+              ) ))
+
+ggplot(result, aes(measured, predicted)) + 
+    geom_point(aes(col = "alle Daten"), alpha=0.05) + 
+    geom_point(data = result2,aes(col = "Versuchdaten"), alpha=0.05) + 
+    geom_abline(slope = 1, intercept = 0, color = "red", linetype = 2) + 
+    facet_wrap(depth~.) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+
+
+#Modell speichern:
+```{r, eval=TRUE}
+#filepath_tf <- "../data/derived_data/Model3/ANNI_Tensorflow_20230516_mitDWD"
+filepath_tf <- "../data/derived_data/Model3/ANNI_Tensorflow_20230524_neueVIs"
+
+keras::save_model_tf(model, filepath = filepath_tf, overwrite = TRUE)
+```
+
+```{r}
+rstudioapi::restartSession()
+```
+
+
+
+#Gespiechertes Modell laden:
+```{r, eval=FALSE}
+# filepath_tf <- "../data/derived_data/Model3/ANNI_Tensorflow_20230516_mitDWD/"
+# 
+# model <- load_model_tf(filepath_tf)
+
+``` 
+
+<!-- ```{r, eval=FALSE} -->
+<!-- # Check its architecture -->
+<!-- summary(new_model) -->
+
+<!-- # fs::dir_tree(filepath_tf) #Ordnerstruktur anzeigen lassen: -->
+
+<!-- # Anwendung des gelandeden Modells wie oben: -->
+<!-- new_model %>% evaluate(test, testtarget) -->
+<!-- pred <- new_model %>% predict(test) -->
+<!-- mean((testtarget-pred)^2) -->
+<!-- ``` -->
+
+
+
