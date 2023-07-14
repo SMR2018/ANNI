@@ -19,7 +19,7 @@ library(DBI)
 path0 <- "GeoSenSys2020/Data_2020/Database_Protokolle/Database_CSV_Tabellen_HGU/HGU_GeoSenSys_V3_6.db"
 # Verbindung zur Datenbanl herstellen:
 path1 <- ifelse(Sys.info()["user"] == "samantha_machgu",
-                "~/Documents/Mac_HGU_Github/", 
+                "~/Documents/Mac_Github/", 
                 "../../"
 )
 db <- paste0(path1, path0) # DB in other R-Project
@@ -41,9 +41,10 @@ fwrite(x = wetter, file = "../data/derived_data/wetter_2020_2022_20220805.csv", 
 
 #Tensio einlesen:
 ```{r}
-tensio <- fread("../data/derived_data/nfK_2020_2022_20220805_10cm_Schritte.csv") %>%
+#tensio <- fread("../data/derived_data/nfK_2020_2022_20220805_10cm_Schritte.csv") %>%
+#    mutate_at("zeit_messung", ~as_date(.))
+tensio <- fread("../data/derived_data/nfK_2020_2022_20220805.csv") %>%
     mutate_at("zeit_messung", ~as_date(.))
-
 ```
 
 #bewaesserung einlesen:
@@ -139,7 +140,7 @@ input_tabelle <- input_tabelle %>%
 ## ISARIA-Daten anfügen
 ```{r}
 db1 <- dbConnect(RSQLite::SQLite(), db)
-isaria <- dbGetQuery(db1, "SELECT 
+isaria <- dbGetQuery(db1, "SELECT
                      Spinat_Saetze.satz_id,
                      ISARIA_N.datum_messung,
                      Varianten.variante_H2O,
@@ -147,7 +148,7 @@ isaria <- dbGetQuery(db1, "SELECT
                      ISARIA_N.ibi,
                      ISARIA_N.irmi
                      FROM ISARIA_N
-                     
+
                      LEFT JOIN Parzellen ON ISARIA_N.parzelle_id = Parzellen.parzelle_id
                      LEFT JOIN Varianten ON Parzellen.variante_id = Varianten.variante_id
                      LEFT JOIN Spinat_Saetze ON Varianten.satz_id = Spinat_Saetze.satz_id;") %>%
@@ -155,10 +156,15 @@ isaria <- dbGetQuery(db1, "SELECT
 dbDisconnect(db1)
 
 #Mittelwert pro Parzelle Messzeitpunkt
-isaria <- isaria %>% 
+isaria <- isaria %>%
     group_by(satz_id, variante_H2O, wiederholung, datum_messung) %>%
     summarise(across(ibi:irmi, ~mean(., na.rm=TRUE)), .groups = "drop") %>%
     mutate_if(is.numeric, ~round(., 2))
+
+
+#NEU: smoothed data aus Auswertung verwenden!
+# isaria <- fread("../../GeoSenSys2020/Auswertung_Saetze/ISARIA_Alignment/HGU_ISARIA_extrapolated_smoothed.csv") %>%
+#      mutate_at("datum_messung", ~as_date(.))
 ```
 
 #Isaria: Interpolation zwischen den Messtagen:
@@ -168,7 +174,7 @@ input_tabelle <- input_tabelle %>%
     group_by(satz_id, variante_H2O, wiederholung) %>%
     #Werte vor der ersten ISARIA-Messung werden gelöscht (keine Interpolation möglich)
     mutate(delete_leading_NA = ifelse(is.na(ibi), 0, 1) %>% cumsum(.) %>% cumsum(.)) %>%
-    filter(delete_leading_NA > 0) %>%    
+    filter(delete_leading_NA > 0) %>%
     select(-delete_leading_NA) %>%
     filter(satz_id > 2) %>%
     group_by(satz_id, variante_H2O, wiederholung) %>%
@@ -185,8 +191,12 @@ input_tabelle <- input_tabelle %>%
 ### nFK vom Vortag als Input ausweisen:
 ```{r}
 input_tabelle <- 
-    input_tabelle  %>%
-    mutate(across(c("nFK_0010","nFK_1020","nFK_2030","nFK_3040","nFK_4050","nFK_5060"), 
+     input_tabelle  %>%
+    # mutate(across(c("nFK_0010","nFK_1020","nFK_2030","nFK_3040","nFK_4050","nFK_5060"), 
+    #               ~c(NA,.[1:(n()-1)]) , 
+    #               .names = "{.col}_Vortag")
+    # )
+    mutate(across(c("T0020_nFK", "T2040_nFK", "T4060_nFK"), 
                   ~c(NA,.[1:(n()-1)]) , 
                   .names = "{.col}_Vortag")
     )
@@ -215,7 +225,7 @@ input_tabelle <-
 ### Tabelle speichern on Projekt-Ordner für Daten
 ```{r}
 # write.table(x = input_tabelle,
-#             file = "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
+#             file = "../data/derived_data/input_tabelle_2020_2022_20230524_25cm_complete.csv",
 #             sep = ";",dec = ".", row.names = FALSE)
 ```
 
