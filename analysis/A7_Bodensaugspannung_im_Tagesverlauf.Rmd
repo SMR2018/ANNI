@@ -1,0 +1,570 @@
+---
+title: "Bodensaugspannung im Tagesverlauf"
+author: "Samantha Rubo"
+date: "2023-05-08"
+---
+
+```{r, message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(signal)
+library(DBI)
+library(rdwd)
+library(WaveletComp)
+library(zoo)
+
+```
+
+# Bodensaugspannung für 8 Sätze aus DB einlesen:
+```{r}
+# Verbindung zur Datenbanl herstellen:
+db <- "~/Documents/Mac_Github/GeoSenSys2020/Data_2020/Database_Protokolle/Database_CSV_Tabellen_HGU/HGU_GeoSenSys_V3_6.db"
+db1 <- dbConnect(RSQLite::SQLite(), db)
+
+
+# Query fuer Tensiometer-Datensatz
+query <- "SELECT
+        Spinat_Saetze.satz_id,
+        Varianten.variante_acronym,
+        Varianten.variante_H2O,
+        Parzellen.wiederholung,
+        Tensiometer.zeit_messung,
+        Tensiometer.bodensaugspannung_0020_hPa,
+        Tensiometer.bodensaugspannung_2040_hPa,
+        Tensiometer.bodensaugspannung_4060_hPa
+
+        FROM Tensiometer
+        LEFT JOIN Parzellen ON Tensiometer.parzelle_id = Parzellen.parzelle_id
+        LEFT JOIN Varianten ON Parzellen.variante_id = Varianten.variante_id
+        LEFT JOIN Spinat_Saetze ON Varianten.satz_id = Spinat_Saetze.satz_id
+       WHERE Varianten.variante_H2O = 'Wfull'
+        ;"
+tensio <- dbGetQuery(db1, query)
+dbDisconnect(db1)
+
+tensio
+```
+
+## (Standardisierte) Saugspannung im Tagesverlauf:
+```{r}
+tensio_clean <- tensio %>% 
+    select(satz_id, variante_acronym, wiederholung, zeit_messung, starts_with("boden")) %>%
+    mutate_at("zeit_messung", ~as_datetime(.) %>% floor_date(., "hour")) %>%
+    mutate(datum = as_date(zeit_messung),
+           stunde = hms::as_hms(zeit_messung))
+
+df_tag <- tensio_clean %>% 
+    group_by(satz_id, variante_acronym, wiederholung, datum) %>%
+    mutate(across(starts_with("boden"), ~as.numeric(scale(.)))) %>%
+    drop_na() %>%
+    group_by(satz_id, variante_acronym, wiederholung, stunde) %>%
+    summarise(across(starts_with("boden"), list(mean = mean, sd = sd)), .groups = "drop") %>%
+    # group_by(satz_id, stunde) %>%
+    # summarise(across(starts_with("boden"), ~mean(.)), .groups = "drop")  %>%
+    group_by(satz_id,stunde) %>%
+    summarise(across(starts_with("boden"), ~mean(.)), .groups = "drop")
+
+
+df_tag_long <- 
+    df_tag %>% pivot_longer(cols = starts_with("boden"), 
+                            names_to = c("Tiefe", "param"),
+                            names_pattern = "bodensaugspannung_?(.*)_(.*)" ) %>%
+    pivot_wider(id_cols = satz_id:Tiefe, names_from = param, values_from = value)
+
+```
+```{r}
+time_seq1 <- seq(0,24,by=2)
+
+p_tagesverlauf_saugspannung <- ggplot(df_tag_long, 
+                                      aes(x=stunde, y=mean, col = Tiefe)) + 
+    # geom_ribbon(aes(ymin = mean - sd,
+    #                 ymax = mean + sd, fill = Tiefe)) +
+    geom_line(size = 1.5) +
+    # geom_smooth(method = "loess", se = FALSE) +
+    scale_fill_manual(values = alpha(scales::hue_pal()(4), 0.5)) + 
+    scale_x_time(breaks = hms::hms(hours = time_seq1), 
+                 labels = time_seq1) + 
+    facet_wrap(.~satz_id) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+p_tagesverlauf_saugspannung
+```
+library(signal) # Savitzky-Golay Smoothing Filter
+spec_derivs_func(data = tec5_means, group = "variante_acronym", n = 9 )
+```{r}
+df_tag_long <- df_tag_long %>% 
+    group_by(satz_id, Tiefe) %>%
+    mutate(mean_smooth = signal::sgolayfilt(mean, n = 9))
+
+p_tagesverlauf_saugspannung %+% (data = df_tag_long) %+% aes(y=mean_smooth)
+```
+
+
+
+
+```{r}
+minmax_hPa <- df_tag_long %>% 
+    group_by(satz_id, Tiefe) %>% 
+    dplyr::filter(mean_smooth == max(mean_smooth) | mean_smooth == min(mean_smooth)) %>% 
+    mutate(minmax = ifelse(mean_smooth == max(mean_smooth), "max1", "min1")) %>%
+    select(-sd, -mean_smooth)
+
+ggplot(minmax_hPa, aes(stunde, y = Tiefe, col =minmax)) + 
+    geom_point() + 
+    scale_y_discrete(limits = c("4060_hPa","2040_hPa", "0020_hPa") ) + 
+    facet_grid(satz_id~.)
+
+
+ggplot(minmax_hPa, aes(stunde, y = satz_id, col = minmax)) + 
+    geom_point() + 
+    #scale_y_discrete(limits = c("4060_hPa","2040_hPa", "0020_hPa") ) + 
+    facet_grid(Tiefe~.) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+#Sonnenauf- und Untergang eintragen
+```{r}
+#Library(suncalc) 
+
+sun <- tensio_clean %>% select(satz_id, datum) %>% distinct() %>% 
+    mutate(suncalc::getSunlightTimes(date = datum,  lat = 50.07, lon = 8.23, tz = "CET") %>% select(sunrise,sunsetStart,dusk)) %>%
+    mutate(across(c("sunrise","sunsetStart","dusk"), ~ hms::as_hms(.))) %>%
+    group_by(satz_id) %>%
+    summarise(across(c("sunrise","sunsetStart","dusk"), 
+                     ~mean(.) %>% hms::as_hms() %>% hms::round_hms(secs = 60*60)))
+
+
+minmax_hPa_sun <- minmax_hPa %>%
+    left_join(sun, by = c("satz_id"))
+```
+
+
+```{r}
+ggplot(minmax_hPa_sun, aes(sunrise, stunde)) + 
+    geom_point() + 
+    facet_grid(.~minmax)
+```
+
+
+```{r}
+tensio_sun <- tensio_clean %>% 
+    select(satz_id, datum, stunde, starts_with("boden")) %>%
+    pivot_longer(cols = starts_with("boden")) %>%
+    drop_na() %>%
+    group_by(satz_id, datum, name) %>%
+    dplyr::filter(value == min(value) | value == max(value)) %>%
+    mutate_at("name", ~str_replace(., pattern = "bodensaugspannung_", replacement = "")) %>%
+    mutate_at("name", ~str_replace(., pattern = "hPa", replacement = "cm")) %>%
+    mutate(minmax = ifelse(value == max(value), "max1", "min1")) %>%
+    select(-value) %>%
+    mutate(suncalc::getSunlightTimes(date = datum,  lat = 50.07, lon = 8.23, tz = "CET") %>% select(sunrise,sunsetStart,dusk)) %>%
+    mutate(across(c("sunrise","sunsetStart","dusk"), ~ hms::as_hms(.))) #%>%
+# # group_by(satz_id) %>%
+#  mutate(across(c("sunrise","sunsetStart","dusk"), 
+#                   ~hms::round_hms(., secs = 10*60)))
+
+```
+
+```{r}
+ggplot(tensio_sun, aes(sunrise, stunde)) + 
+    geom_point() + 
+    facet_grid(.~minmax) + 
+    theme(axis.text.x = element_text(angle = 75, vjust = 1, hjust = 1))
+```
+
+#Lufttemperatur einlesen (DWD)
+```{r}
+#Daten bereits einmal heruntergeladen
+# link <- selectDWD(id = 1580, #Geisenheim
+#                   res="hourly", var="air_temperature", per="hr",#historical and recent
+#                   current=FALSE, meta = F)
+# link
+# 
+# #Download data from the DWD CDC FTP Server
+# file <- dataDWD(url = link, read=FALSE,
+#                 dir = "~/Downloads/",
+#                 quiet=TRUE, force=NA)
+file <- c("/Users/samantha_machgu/Downloads/hourly_air_temperature_historical_stundenwerte_TU_01580_19460101_20221231_hist.zip", 
+          "/Users/samantha_machgu/Downloads/hourly_air_temperature_recent_stundenwerte_TU_01580_akt.zip")
+
+#Process data from the DWD CDC FTP Server to a data.frame
+temp_air <- readDWD(file, varnames=TRUE,fread=TRUE) 
+```
+
+```{r}
+df_Lufttemp <- bind_rows(temp_air) %>% 
+    dplyr::filter(between(MESS_DATUM, 
+                          min(tensio_clean$zeit_messung), 
+                          max(tensio_clean$zeit_messung))) %>%
+    select(zeit_messung = MESS_DATUM, Tair = TT_TU.Lufttemperatur) %>% 
+    mutate(datum = as_date(zeit_messung),
+           stunde = hms::as_hms(zeit_messung))
+
+tensio_sun_temp <- tensio_sun %>% left_join(df_Lufttemp, by = c("datum", "stunde"))
+
+ggplot(tensio_sun_temp, aes(Tair, stunde)) + 
+    geom_point() + 
+    facet_grid(.~minmax) + 
+    theme(axis.text.x = element_text(angle = 75, vjust = 1, hjust = 1))
+```
+
+```{r, warning=FALSE}
+ggplot(tensio_sun_temp, aes(stunde)) + 
+    geom_bar() +
+    #geom_histogram() + 
+    #geom_density() +
+    facet_grid(name~minmax) +     
+    scale_x_time(breaks = hms::hms(hours = time_seq1), labels = time_seq1) +
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+
+#Ableitung um alle minima auszulesen:
+```{r}
+dfx <- tensio_clean %>% 
+    pivot_longer(cols = starts_with("boden")) %>%
+    group_by(satz_id, variante_acronym, wiederholung, name) %>%
+    drop_na() %>%
+    mutate(mean_smooth = signal::sgolayfilt(value, n = 7)) %>%
+    
+    mutate(hPa_diff = c(0, diff(mean_smooth))) %>%
+    mutate(hPa_diff_smooth = signal::sgolayfilt(hPa_diff, n = 7))
+
+
+
+p_tagesverlauf_saugspannung %+% (data = dfx) %+% aes(y=hPa_diff, col = name)
+p_tagesverlauf_saugspannung %+% (data = dfx) %+% aes(y=hPa_diff_smooth, col = name)
+
+
+
+dfx <- dfx %>% ungroup() %>% dplyr::filter(between(hPa_diff_smooth, -0.01, 0.01))
+ggplot(dfx, aes(stunde)) + 
+    geom_bar() +
+    #geom_histogram() + 
+    #geom_density() +
+    #facet_grid(name~minmax) +     
+    scale_x_time(breaks = hms::hms(hours = time_seq1), labels = time_seq1) +
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+
+
+
+# Highpass-Filter einbauen!
+```{r}
+df_plot <- tensio_clean %>% 
+    group_by(satz_id, variante_acronym, wiederholung) %>%
+    mutate(das = cumsum(c(0, diff(datum)))) %>% 
+    group_by(satz_id, variante_acronym, wiederholung, das) %>%
+    
+    mutate(stunde_numeric = format.Date(stunde, "%H") %>% as.numeric) %>%
+    
+    mutate(stunde_fortlaufend = c(0, diff(stunde_numeric))) %>% 
+    group_by(satz_id, variante_acronym, wiederholung) %>%
+    mutate(stunde_fortlaufend = cumsum(stunde_fortlaufend)) %>% 
+    
+    select(-datum, -zeit_messung) %>% 
+    pivot_longer(cols = starts_with("boden")) %>% 
+    group_by(satz_id, variante_acronym, wiederholung, name) %>%
+    drop_na() %>%
+    mutate(id = cur_group_id()) %>% ungroup()
+#df_plot
+```
+
+
+```{r}
+# #Loess-funktion
+# loess_models1 <- map(1:max(df_plot$id),
+#                      ~loess(value ~ stunde_fortlaufend, data= dplyr::filter(df_plot, id == .x) %>% drop_na(),
+#                             span = 0.2)
+# )
+# 
+# loess_results1 <- map(1:max(df_plot$id),
+#                       ~predict(loess_models1[[.x]], 
+#                                newdata = data.frame(stunde_fortlaufend = dplyr::filter(ungroup(df_plot), 
+#                                                                                        id == .x) %>%
+#                                                         pull(stunde_fortlaufend))) %>% 
+#                           as.numeric()
+# )
+# plot(df_plot %>% dplyr::filter(id == 2) %>% pull(value), type = "l")
+# lines(loess_results1[[2]],col="red")
+```
+
+
+```{r}
+#library(zoo)
+df_plot <- df_plot %>%
+    group_by(id) %>%
+    #mutate(value_runmed = loess_results1[[unique(id)]]) %>%
+    #mutate(value_runmed = signal::sgolayfilt(value, n =3*24+1)) %>%
+    #mutate(value_runmed = runmed(x = value, k = 24)) %>%
+    mutate(value_runmed = rollapply(value,24,min,align='center',fill=NA)) %>%
+    mutate_at("value_runmed", ~na.fill(., "extend")) %>%
+    mutate(value_detrended = value - value_runmed)
+
+#df_plot
+```
+
+
+```{r}
+#Raw Plot:
+id = 147
+praw <- ggplot(df_plot %>% dplyr::filter(satz_id == id), aes(das, value, linetype = wiederholung, color = variante_acronym)) + 
+    geom_line() + 
+    #geom_smooth(method = "loess", span = 0.2, se = F, col = "blue", linetype = 6) + 
+    geom_line(aes(y=value_runmed, col = "black")) +
+    facet_grid(satz_id ~name) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+praw
+
+#Detrended Plot:
+ggplot(df_plot %>% dplyr::filter(satz_id == id), aes(das, value, linetype = wiederholung, color = variante_acronym)) + 
+    geom_line(aes(y=value_detrended))+
+    facet_grid(satz_id ~name) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+
+#Tagesverlauf der detrendeden Saugspannung:
+```{r}
+df_tag <- df_plot %>% select(-value, -value_runmed) %>%
+    group_by(satz_id, variante_acronym, wiederholung, das, name) %>%
+    mutate(across(starts_with("value_detrended"), ~as.numeric(scale(.)))) %>%
+    drop_na() %>%
+    group_by(satz_id, variante_acronym, wiederholung, stunde, name) %>%
+    summarise(across(starts_with("value_detrended"), list(mean = mean, sd = sd)), .groups = "drop") %>%
+    group_by(satz_id,name,stunde) %>%
+    summarise(across(starts_with("value_detrended"), ~mean(.)), .groups = "drop") %>%
+    mutate_at("value_detrended_mean", ~signal::sgolayfilt(., n =9)) 
+
+
+df_tag_long <- 
+    df_tag %>% 
+    mutate_at("name", ~str_replace(., pattern = "bodensaugspannung_", replacement = "")) %>%
+    mutate_at("name", ~str_replace(., pattern = "hPa", replacement = "cm"))  %>%
+    rename(Tiefe = name)
+
+p_tagesverlauf_saugspannung %+% (data = df_tag_long) %+% aes(y=value_detrended_mean)
+```
+
+```{r}
+#library(WaveletComp)
+wavelet_list <- map(1:15, 
+                    ~analyze.wavelet(df_plot %>% dplyr::filter(id == .x), 
+                                     "value",
+                                     #loess.span = 0.2,
+                                     dt = 1/24, dj = 1/20,
+                                     #lowerPeriod = 16,
+                                     upperPeriod = 24*2,
+                                     make.pval = TRUE, n.sim = 10)
+)
+```
+```{r}
+map(1:15, 
+    ~wt.image(wavelet_list[[.x]], color.key = "quantile", n.levels = 250,
+              legend.params = list(lab = "wavelet power levels", mar = 4.7))
+)
+```
+
+```{r}
+map(1:15, 
+    ~reconstruct(wavelet_list[[.x]], plot.waves = T, lwd = c(1,2),
+                 legend.coords = "bottomleft")#, ylim = c(-1.8, 1.8))
+)
+```
+
+
+
+#Loess-Funktion / Golay Filter für jeden Tag??
+
+```{r}
+df_plot <- tensio_clean %>% 
+    drop_na() %>%
+    group_by(satz_id, variante_acronym, wiederholung) %>%
+    mutate(das = cumsum(c(0, diff(datum)))) %>% 
+    group_by(satz_id, variante_acronym, wiederholung, das) %>%
+    mutate(stunde_numeric = format.Date(stunde, "%H") %>% as.numeric) %>%
+    select(-datum, -zeit_messung) %>% 
+    pivot_longer(cols = starts_with("boden")) %>% 
+    group_by(satz_id, variante_acronym, wiederholung, name, das) %>%
+    mutate(id = cur_group_id()) %>%
+    add_tally %>%
+    dplyr::filter(n==24) %>%
+    mutate(value_smooth = signal::sgolayfilt(value, n = 9))
+
+```
+
+
+#Grafik: standardisierte Bodensaugspannung im Tagesverlauf (Linie pro Tag)
+```{r}
+df_small <- df_plot %>% group_by(satz_id, variante_acronym, wiederholung, name) %>% 
+    dplyr::filter(value > 60) %>% #saugspannung > 60 hPa: Feldkapazität erreicht. Saugspannung nicht mehr differenzierbar
+    mutate(id = cur_group_id()) %>%
+    group_by(satz_id, variante_acronym, wiederholung, name, das) %>% 
+    mutate_at("value_smooth", ~scale(.)[,1]) %>% ungroup()
+
+
+p_tag <- ggplot(df_small %>%  dplyr::filter(id == 125, das > 2), aes(stunde_numeric, value_smooth, color = as.factor(das))) + 
+    geom_line() + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+
+p_tag
+p_tag %+% (data = df_small %>%  dplyr::filter(id == 126, das > 2)) ##S8, Wfull, Wdh a, 40-60cm Tiefe
+p_tag %+% (data = df_small %>%  dplyr::filter(id == 1, das > 20))
+p_tag %+% (data = df_small %>%  dplyr::filter(id == 20, das > 20)) ##S3, N80Wfull, wdh b, 20-40cm Tiefe
+p_tag %+% (data = df_small %>%  dplyr::filter(id == 50, das > 0)) ##S4, N80Wfull, d, 20-40cm
+```
+
+## Standardisierte Bodensaugspannung im Tagesverlauf (Mittelwert aller Messungen)
+```{r}
+ggplot(df_small, aes(stunde_numeric, value_smooth, col = name)) +
+    stat_summary(geom = "line", fun = "mean") +
+    theme_bw() + 
+    theme(panel.grid = element_blank()) +
+    ylab("standardisierte Bodensaugspannung")
+
+ggplot(df_small, aes(stunde_numeric, value, col = name)) +
+    stat_summary(geom = "line", fun = "mean") +
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+#Filter: DAS > 25! sonst kein Tagesverlauf der Saugspannung, da noch keine Wurzeln 
+(evtl. auch Beweisführung: ohne Wurzeln kein Tagesverlauf, d.h. Tagesverlauf basiert auf Wasserverbrauch der Pflanzen, nicht evaporation des Bodens)
+
+--> Nope: S8, Wfull, Wdh h, 40-60cm Tiefe: Verlauf ab DAS 1 --> 
+
+#Bodentemperatur für alle Sätze einlesen: //PC gerade offline
+```{r}
+#Daten bereits einmal heruntergeladen
+# link <- selectDWD(id = 1580, #Geisenheim
+#                   res="hourly", var="soil_temperature", per="hr",#historical and recent
+#                   current=FALSE, meta = F)
+# link
+# 
+# #Download data from the DWD CDC FTP Server
+# file <- dataDWD(url = link, read=FALSE,
+#                 dir = "~/Downloads/",
+#                 quiet=TRUE, force=NA)
+file <-c("/Users/samantha_machgu/Downloads/hourly_soil_temperature_historical_stundenwerte_EB_01580_19510101_20221231_hist.zip",
+         "/Users/samantha_machgu/Downloads/hourly_soil_temperature_recent_stundenwerte_EB_01580_akt.zip")
+
+#Process data from the DWD CDC FTP Server to a data.frame
+temp_soil <- readDWD(file, varnames=TRUE,fread=TRUE)
+
+# 
+# 
+df_soiltemp <- bind_rows(temp_soil) %>%
+    dplyr::filter(between(MESS_DATUM,
+                          min(tensio_clean$zeit_messung),
+                          max(tensio_clean$zeit_messung))) %>%
+    select(zeit_messung = MESS_DATUM, 
+           T10cm = V_TE010.Erdbodentemperatur_010cm,
+           T20cm = V_TE020.Erdbodentemperatur_020cm,
+           T50cm = V_TE050.Erdbodentemperatur_050cm) %>%
+    mutate(datum = as_date(zeit_messung),
+           stunde_numeric = as.numeric(format.Date(zeit_messung, "%H")))
+# stunde = hms::as_hms(zeit_messung))
+```
+
+
+```{r}
+df_table <- tensio_clean %>% ungroup() %>% 
+    dplyr::select(satz_id, datum, variante_acronym, wiederholung) %>%
+    distinct() 
+#df_table
+
+df_soiltemp <- df_soiltemp %>% 
+    left_join(df_table, by = "datum") %>%
+    pivot_longer(cols = ends_with("cm")) %>%
+    drop_na() %>%
+    group_by(satz_id, variante_acronym, wiederholung) %>%
+    mutate(das = cumsum(c(0, diff(datum)))) %>% 
+    select(-datum, -zeit_messung) %>% 
+    group_by(satz_id, variante_acronym, wiederholung, name, das) %>%
+    mutate(id = cur_group_id()) %>%
+    add_tally %>%
+    dplyr::filter(n >= 15) %>%
+    mutate(value_smooth = signal::sgolayfilt(value, n = 9)) %>%
+    mutate(value_smooth_scaled = scale(value_smooth)[,1]) %>% ungroup()
+
+```
+
+```{r}
+df_Lufttemp_satze <- df_Lufttemp %>%
+    drop_na() %>%
+    left_join(df_table, by = "datum") %>%
+    select(satz_id, datum, stunde, Tair) %>%
+    group_by(satz_id) %>%
+    mutate(das = cumsum(c(0, diff(datum)))) %>% 
+    group_by(satz_id, das) %>%
+    mutate(stunde_numeric = format.Date(stunde, "%H") %>% as.numeric) %>%
+    mutate(id = cur_group_id()) %>%
+    add_tally %>%
+    dplyr::filter(n > 15) %>%
+    mutate(Tair_smooth = signal::sgolayfilt(Tair, n = 9)) %>%
+    #select(satz_id, das, stunde_numeric, Tair, Tair_smooth) %>%
+    group_by(satz_id, das) %>% 
+    mutate_at("Tair_smooth", ~scale(.)[,1]) %>% ungroup()
+
+```
+## Join Saugspannung und Lufttemp
+```{r}
+ggplot(df_Lufttemp_satze,# %>% dplyr::filter(satz_id == 6),
+       aes(stunde_numeric, Tair_smooth)) +#, color = as.factor(das))) + 
+    stat_summary(geom = "line", fun = "mean") +
+    # geom_line() + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+
+p_soil_smooth <- ggplot(df_soiltemp,
+                        aes(stunde_numeric, value_smooth, col = name)) +
+    stat_summary(geom = "line", fun = "mean") +
+    ylab("Bodentemperatur (°C)") + 
+    facet_grid(.~satz_id) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+
+p_soil_smooth
+p_soil_smooth + aes(y=value_smooth_scaled) + theme(aspect.ratio = 1.5) +     ylab("standardisierte Bodentemperatur") 
+```
+
+```{r}
+df_joined <- df_small %>% 
+    dplyr::filter(#str_detect(name, "0020") & 
+        wiederholung == "a" & variante_acronym == "N100Wfull") %>%
+    select(-id,-n,-stunde) %>%
+    left_join(df_Lufttemp_satze, by = c("satz_id", "das", "stunde_numeric"))
+
+
+```
+
+```{r}
+df_joined <- df_small %>% 
+    # dplyr::filter(str_detect(name, "0020") & wiederholung == "a" & variante_acronym == "N100Wfull") %>%
+    mutate_at("name", ~case_when(str_detect(., "0020_hPa") ~ "T10cm",
+                                 str_detect(.,"2040_hPa") ~ "T20cm",
+                                 str_detect(.,"4060_hPa") ~ "T50cm")) %>%
+    left_join(df_soiltemp %>% select(-id,-n, tboden_smooth= value_smooth) , 
+              by = c("satz_id","name", "das", "variante_acronym", "wiederholung", "stunde_numeric")) %>%
+    dplyr::filter(!is.na(tboden_smooth))
+```
+
+```{r}
+ggplot(df_joined %>% dplyr::filter(das >20), aes(Tair_smooth, value_smooth, col = das)) +
+    geom_point() + 
+    facet_wrap(.~satz_id, nrow = 2) +
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+
+ggplot(df_joined %>% dplyr::filter(das >25), aes(tboden_smooth, value_smooth, 
+                                                 col = as.factor(das))) +
+    geom_point() + 
+    facet_grid(name~satz_id) +
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+
