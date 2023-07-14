@@ -1,0 +1,46 @@
+---
+title: "Wetterdaten zusammenstellen: Historie, Prognose, Kumsums, geschätzter DAE, geschätzte Ibi + Irmi"
+author: "Samantha Rubo"
+date: "2023-05-15"
+---
+
+
+
+```{r, eval=FALSE}
+params <- list(schlag= "Mittelgewann",
+                 lat= 49.6025744,
+                 lon= 8.3598389,
+                 datum_aussaat= "2023-03-01",
+                 Ton_prozent= 15,
+                 Schluff_prozent= 25,
+                 Sand_prozent= 60,
+                 C_org_prozent= 1.2)
+```
+
+```{r, eval=FALSE}
+params1 <- list(schlag= "Stichelpfad",
+                 lat= 49.59097,
+                 lon= 8.33063,
+                 datum_aussaat= "2023-04-18",
+                 Ton_prozent= 19.5,
+                 Schluff_prozent= 36,
+                 Sand_prozent= 44.5,
+                 C_org_prozent= 1.2)
+```
+
+```{r, eval=FALSE}
+params1 <- list(schlag= "Kämmerwiese",
+                 lat= 49.65025,
+                 lon= 8.42026,
+                 datum_aussaat= "2023-04-27",
+                 Ton_prozent= 46.5,
+                 Schluff_prozent= 35.5,
+                 Sand_prozent= 18,
+                 C_org_prozent= 1.2)
+```
+
+
+```{r, eval=FALSE}
+rmarkdown::render(input = "Wetterdaten_zusammenstellen_default.Rmd", params = params1)
+```
+
