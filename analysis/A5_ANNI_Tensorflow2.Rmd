@@ -81,7 +81,7 @@ test <- scale(test, center = m, scale = s)
 #Skalierungs-Daten speichern für Skalierung neuer Input-Daten in der Anwendung
 ```{r}
 scaling_data <- data.frame(m=m, s=s)
-fwrite(scaling_data, file = "../data/derived_data/Model2/scaling_data.csv")
+#fwrite(scaling_data, file = "../data/derived_data/Model2/scaling_data.csv")
 ```
 
 
@@ -93,7 +93,7 @@ fwrite(scaling_data, file = "../data/derived_data/Model2/scaling_data.csv")
 
 #Keras initiieren: Input-Layer und Output-Layer definieren
 #A ) Sequential Model
-```{r, eval=TRUE19,5m}
+```{r, eval=TRUE}
 model <- keras_model_sequential()
 
 #Modell weiter anpassen:
@@ -123,7 +123,7 @@ model %>% compile(loss = 'mse',
 ```
 
 #B) Functional Model:
-```{r}
+```{r, eval=FALSE}
 inputs <- layer_input(shape = c(length(idx_x)))
 
 # outputs compose input + dense layers

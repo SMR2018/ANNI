@@ -1,12 +1,18 @@
 ---
 title: "R Notebook"
-params:
-  filepath_tf: ../data/derived_data/Model2/ANNI_Tensorflow_20230420
-  scaling_data_path: ../data/derived_data/Model2/scaling_data.csv
-  wetter_anbau_daten_csv: ../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv
 ---
 
 Anwenden des gespeicherten ANNI-Modells im Loop mit Trainingsdaten für einen Satz.
+
+```{r}
+rm(list=ls())
+#filepath_tf <-  "../data/derived_data/Model3/ANNI_Tensorflow_20230503"
+filepath_tf <-  "../data/derived_data/Model2/ANNI_Tensorflow_20230420"
+scaling_data_path <- "../data/derived_data/Model2/scaling_data.csv"
+wetter_anbau_daten_csv <- "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv"
+auswahl <- 50 #unten: auswahl chronologisch: satz und parzelle. c(1:71)
+```
+
 
 ```{r}
 library(keras)
@@ -22,23 +28,31 @@ library(cowplot)
 <!-- 1\. Gespiechertes Modell laden -->
 
 ```{r, eval=TRUE}
-filepath_tf <- params$filepath_tf
+filepath_tf <- filepath_tf
 new_model <- load_model_tf(filepath_tf)
 ```
 
 <!-- 2\. Skalierungs-Werte für Input-Daten laden -->
 
 ```{r}
-scaling_data <- data.table::fread(params$scaling_data_path)
+scaling_data <- data.table::fread(scaling_data_path)
 ```
 
 <!-- 3\. Wetter- und Anbaudaten einlesen -->
 
 ```{r}
-satz_raw <- data.table::fread(params$wetter_anbau_daten_csv)
-idx_einSatz <- 949:981
-satz_y <- satz_raw[idx_einSatz, c(1:6)]
-satz_raw <- satz_raw[idx_einSatz, -c(1:6)]
+satz_raw <- data.table::fread(wetter_anbau_daten_csv)
+
+satz_raw <- satz_raw %>% mutate(x = c(-1, diff(tage_seit_aussaat)), .before = "nFK_0010") %>%
+    mutate(satz_plot = ifelse(x != 1, 1,0), .after = "x") %>%
+    mutate_at("satz_plot", ~cumsum(.))
+
+# idx_einSatz <- 949:981
+# satz_y <- satz_raw[idx_einSatz, c(1:6)]
+# satz_raw <- satz_raw[idx_einSatz, -c(1:6)]
+
+satz_y <- satz_raw %>% filter(satz_plot == auswahl) %>% select(2+1:6)
+satz_raw <- satz_raw %>% filter(satz_plot == auswahl) %>% select(-c(1:(6+2)) )
 
 satz_scaled <- scale(satz_raw, center = scaling_data$m, scale = scaling_data$s)
 ```
