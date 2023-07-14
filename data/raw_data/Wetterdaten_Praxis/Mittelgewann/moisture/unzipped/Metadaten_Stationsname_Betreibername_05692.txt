@@ -1,0 +1,7 @@
+Stations_ID;Stationsname;Von_Datum;Bis_Datum
+  5692;Worms;18900101;
+
+Stations_ID;Betreibername;Von_Datum;Bis_Datum
+  5692;Wetterdienst;18900101;19521110
+  5692;DWD;19521111;
+generiert: 17.05.2023 --  Deutscher Wetterdienst  --

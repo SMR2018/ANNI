@@ -1,0 +1,6 @@
+Stations_ID;Stationsname;Geo. Laenge [Grad];Geo. Breite [Grad];Stationshoehe [m];Geberhoehe ueber Grund [m];Von_Datum;Bis_Datum;Geraetetyp Name;Messverfahren;eor;
+5692;Worms;8.38;49.63;91;2;19700101;19941231;Thermohygrograph;Temperatur- und Feuchtereg., konv.;eor;
+5692;Worms;8.35;49.67;90;2;19950101;20040831;Thermohygrograph;Temperatur- und Feuchtereg., konv.;eor;
+5692;Worms;8.37;49.61;88;2;20040901;20160822;Feuchtesonde HMP45D;Feuchtemessung, elektr.;eor;
+5692;Worms;8.37;49.61;88;2;20160823;20230516;EE33;Feuchtemessung, elektr.;eor;
+generiert: 17.05.2023 --  Deutscher Wetterdienst  --
