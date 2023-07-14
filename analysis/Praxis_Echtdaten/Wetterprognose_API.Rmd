@@ -1,0 +1,118 @@
+---
+title: "R Notebook"
+author: "Samantha Rubo"
+date: "2023-05-15"
+# params:
+#   schlag: "Mittelgewann"
+#   lon: 49.60
+#   lat: 8.35
+params:
+  schlag: "Geisenheim"
+  lon: 7.957512 
+  lat: 49.98318
+---
+
+```{r, message=F}
+library(httr)
+library(jsonlite)
+library(data.table)
+library(dplyr)
+library(purrr)
+library(ggplot2)
+library(lubridate)
+```
+
+```{r}
+schlag <- params$schlag
+lat = params$lat
+lon = params$lon
+```
+
+
+## 5-Tage-Prognose der Wetter-Daten per API downloaden
+```{r}
+api_url <- paste0("api.openweathermap.org/data/2.5/forecast?lat=",
+                  params$lat, "&lon=", params$lon,
+                  "&appid=f70b71932815b572d98a8338c13e5dd4")
+res = GET(api_url)
+#res
+```
+## JSON-Format auslesen:
+```{r}
+prognose <-  fromJSON(rawToChar(res$content))
+#prognose
+```
+
+
+## Die 3 Haupttabellen + Name der Wetterstation:
+```{r}
+#Stadt:
+# prognose$city$name #Bobenheim
+# prognose$list$main
+# prognose$list$wind
+# prognose$list$rain
+```
+
+## Zeit auslesen und an Zeitzone anpassen
+```{r}
+#prognose$list$dt_txt
+zeit <- prognose$list$dt %>% as_datetime()
+sekunden_addieren <- prognose$city$timezone
+zeit_unsere_zeitzone <- zeit + sekunden_addieren
+```
+
+## Welche Daten werden für ANNI beötigt?
+```{r}
+# #Header der Input-Daten für ANNI
+# temp <- data.table::fread("../../../ANNI/data/derived_data/input_tabelle_2020_2022_20220808_complete.csv")
+# #names(temp)
+# 
+# 
+# temp2 <- data.table::fread("../../../DWD_database_ANNI2/data/derived_data/DWD_data/alle_stationsdaten_zusammen_part7of7.csv")
+# #names(temp2)
+```
+
+
+## Datensätze aus Liste zusammenführen und für Tage mitteln/summieren
+Rohformat ist in Zeitintervallen von 3h
+```{r}
+prognose_pro_tag <- prognose$list$main %>%
+    mutate(zeit = zeit_unsere_zeitzone, .before = "temp") %>%
+    mutate(across(c("temp", "temp_min", "temp_max", "feels_like"), ~.-273.15)) %>%
+    select(zeit, Tmean_gradC = temp,Tmin_gradC = temp_min,Tmax_gradC = temp_max, relLuftfeuchte_3h_prozent =  humidity ) %>%
+    mutate(windgeschwindigkeit_m_s = prognose$list$wind$speed) %>%
+    mutate(niederschlag_mm = ifelse(is.null(prognose$list$rain$'3h'),0,prognose$list$rain$'3h')) %>%
+    mutate(datum = format.Date(zeit, "%Y-%m-%d")) %>%
+    group_by(datum) %>%
+    summarise(Tmean_gradC = mean(Tmean_gradC),
+              Tmin_gradC = min(Tmin_gradC),
+              Tmax_gradC = max(Tmax_gradC),
+              relLuftfeuchte_mean_prozent = mean(relLuftfeuchte_3h_prozent),
+              relLuftfeuchte_min_prozent =  min(relLuftfeuchte_3h_prozent) ,
+              relLuftfeuchte_max_prozent =  max(relLuftfeuchte_3h_prozent),
+              windgeschwindigkeit_m_s = mean(windgeschwindigkeit_m_s),
+              wasser_input_mm = sum(niederschlag_mm, na.rm = T), .groups = "drop") %>% 
+    mutate(tag_prognose = 1:n(), .after = "datum") %>%
+    slice(-n()) #letzter Tag nur abgebrochen, daher Werte nicht sinnvoll
+
+prognose_pro_tag
+```
+
+# Prognose als CSV speichern:
+```{r}
+
+date_range_prognose <- range(prognose_pro_tag$datum) %>% 
+    format.Date(., format = "%Y%m%d") %>% paste0(collapse = "_")
+name_output_csv <- paste0("../../data/derived_data/Wetterdaten_Praxis/", params$schlag, "/Prognose_",date_range_prognose, ".csv")
+
+fwrite(prognose_pro_tag, file = name_output_csv)
+
+cat(paste("Die Wetter-Prognose der nächsten fünf Tage ist geispeichert unter: \n", name_output_csv))
+```
+
+
+Globalstrahlung wird später entweder aus Jahresverlauf oder aus Mittelwert der letzten drei Tage berechnet.
+
+
+
+
