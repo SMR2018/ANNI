@@ -1,0 +1,85 @@
+---
+title: "A8_Sensitivity_Analysis_ANNI"
+---
+
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(neuralnet)
+library(ggplot2)
+library(NeuralSens) #Sensitivity Analysis
+```
+
+#Gespiechertes Modell laden:
+```{r, eval=TRUE}
+filepath_tf <- "../data/derived_data/Model2/ANNI_Tensorflow_20230717"
+
+new_model <- load_model_tf(filepath_tf)
+# Check its architecture
+summary(new_model)
+```
+
+
+
+# Sensitivitäts-Analyse:
+```{r}
+model_weights <- get_weights(new_model)
+wts <- c()
+
+neural_struct <- c(nrow(model_weights[[1]]))
+
+for (i in seq(2, length(model_weights), 2)) {
+    neural_struct <- c(neural_struct, dim(model_weights[[i]]))
+    lyr_wgts <- rbind(model_weights[[i]], model_weights[[i - 1]])
+    wts <- c(wts, unname(do.call(c, as.data.frame(lyr_wgts))))
+}
+
+actfunc <-c("sigmoid", "sigmoid", "sigmoid", "linear") 
+#c("sigmoid", "sigmoid")
+#c("linear", "ReLU", "ReLU", "linear")
+```
+
+
+
+training,trainingtarget aus A5_ANNI... des zugehörigen Modells
+
+```{r}
+sens_keras <- SensAnalysisMLP(
+   wts, 
+    trData = as.data.frame(training,trainingtarget),
+    mlpstr = neural_struct, 
+    coefnames = names(data0)[7:37],
+    output_name = names(data0)[1],#:6], 
+    actfunc = actfunc, plot = FALSE) 
+#summary(sens_keras)
+```
+
+
+```{r include=FALSE}
+p1 <- plot(sens_keras)
+```
+
+```{r, fig.width=10, dpi=300}
+p1[[1]]$layers[[5]] <- NULL
+p1[[1]] +
+    ggrepel::geom_label_repel(aes(label =varNames, x =mean, y =std ), size = 2,
+                              box.padding = unit(0.25, "lines")) +
+    theme(panel.grid = element_blank())
+```
+
+
+```{r}
+p1[[2]] + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+                panel.grid = element_blank())
+```
+
+
+```{r, warning=FALSE}
+p1[[3]] + theme(legend.position = "none")
+
+legend3 <- ggpubr::get_legend(p1[[3]])
+plot(legend3)
+```
+
