@@ -5,7 +5,7 @@ date: "2022-08-10"
 ---
 
 
-```{r}
+```{r, message=FALSE}
 library(keras)
 library(mlbench)
 library(dplyr)
@@ -13,19 +13,68 @@ library(magrittr)
 library(neuralnet)
 library(ggplot2)
 library(data.table)
+library(purrr)
 ```
 
 
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 ```{r}
-rm(list = ls())
-data0 <- data.table::fread(
-    "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv", 
+#rm(list = ls())
+data1 <- data.table::fread(
+    #"../data/derived_data/input_tabelle_2020_2022_20230822_10cm_complete.csv",
+    # "../data/derived_data/input_tabelle_2020_2022_20230823_from_hydrus_complete.csv",
+    "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
     sep = ";", dec = ".") %>% as_tibble()
 
+# data0 <- data0 %>% select(starts_with("nFK"),"tage_seit_aussaat","Tmean_gradC","Tmean_th9_25_gradC","Tmin_gradC","Tmax_gradC","relLuftfeuchte_mean_prozent" , "globalstrahlung_Wh_m2","windgeschwindigkeit_m_s","tageslicht_h","tageslicht_h_th9", "ibi", "irmi", "wasser_input_Vortag") %>%
+#     mutate(across(starts_with("nFK"), ~.*-1)) %>%
+#     slice(-c(1:220))
+
+#DWD:
+file_list <- list.files("../../DWD_database_ANNI2/data/derived_data/DWD_data/",
+                        pattern = "alle_stationsdaten_zusammen", full.names = T)
+
+data0 <- map_df(file_list, ~fread(.)) %>% as_tibble()
 ```
 \
 #Variablen auswählen:
+```{r}
+names(data1)
+names(data1)[!names(data1) %in% names(data0)] #Diese Variablen fehlen noch bei AMBAV-DWD-Daten
+```
+```{r}
+Greznwert_temp <- 9.1
+
+data0 <- data0 %>% 
+    filter(Tmean_gradC > 5) %>%
+    mutate(satz_nr = rep(1:(n()/50), each = 50, length.out = n())) %>%
+    group_by(satz_nr) %>%
+    mutate(tage_seit_aussaat = 1:n(),
+           Tmean_th9_25_gradC = ifelse(Tmean_gradC > 25, 25,Tmean_gradC), .after = "Tmean_gradC") %>%
+    mutate_at("Tmean_th9_25_gradC", ~ifelse(.<Greznwert_temp,0,.)) %>%
+    mutate(tageslicht_h_th9 = ifelse(Tmean_gradC >= Greznwert_temp, tageslicht_h, 0)) %>%
+    mutate(tageslicht_h_th9_7d = ifelse(tage_seit_aussaat <= 7, 0, tageslicht_h_th9)) %>% 
+    mutate(across(c("tageslicht_h", "tageslicht_h_th9","tageslicht_h_th9_7d","Tmean_gradC", "globalstrahlung_Wh_m2", "Tmean_th9_25_gradC"), ~cumsum(.), .names = "{.col}_sum")) %>%
+    mutate(ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_7d_sum)/63.903)), 
+           irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_7d_sum)/224.165))) %>%
+    ungroup()%>% 
+    filter(globalstrahlung_Wh_m2 < 10000 &  #unplausible Daten löschen
+    globalstrahlung_Wh_m2_sum < 300000 &
+        wasser_input_Vortag < 20
+    ) %>%#
+    select(all_of(names(data1)))
+
+data_bodenart <- data0 %>% 
+    slice(1:200000) %>%
+    mutate(Ton_prozent = 46.5,
+           Schluff_prozent = 35.5,
+           Sand_prozent = 18,
+           C_org_prozent = 1.3)
+
+data0 <- bind_rows(data0, data_bodenart)
+```
+
+
 ```{r}
 # data <- data0 %>%
 #     mutate(nFK_0010_change = nFK_0010_Vortag - nFK_0010,
@@ -81,7 +130,7 @@ test <- scale(test, center = m, scale = s)
 #Skalierungs-Daten speichern für Skalierung neuer Input-Daten in der Anwendung
 ```{r}
 scaling_data <- data.frame(m=m, s=s)
-#fwrite(scaling_data, file = "../data/derived_data/Model2/scaling_data.csv")
+fwrite(scaling_data, file = "../data/derived_data/Model2/scaling_data_20230823.csv")
 ```
 
 
@@ -104,6 +153,14 @@ model %>%
     layer_dense(units = 50, activation = 'sigmoid')  %>%
     layer_dropout(rate=0.2)  %>%
     layer_dense(units = length(idx_y))
+# 
+# model %>%
+#     layer_dense(units = 256, activation = 'sigmoid',
+#                 input_shape = c(NULL)) %>% #Offen lassen
+#     layer_dropout(rate=0.2)  %>%
+#     layer_dense(units = 128, activation = 'sigmoid') %>%
+#     layer_dropout(rate=0.2)  %>%
+#     layer_dense(units = 1)
 
 #Loss-Function beschreiben
 model %>% compile(loss = 'mse',
@@ -146,27 +203,34 @@ model %>% compile(
     #    metrics = c('mae', 'accuracy')
     metrics = c('mae')
 )
+```
 
-
+#Model trainieren:
+```{r, message=FALSE}
 earlystopping = callback_early_stopping(monitor = "loss", 
                                         min_delta = 1, 
                                         patience = 5, 
                                         mode = "min", 
                                         restore_best_weights = TRUE                                            
 )
-```
 
-
-#Model trainieren:
-```{r, message=FALSE}
 model %>%          
     fit(training,trainingtarget, 
-        epochs = 256,
-        batch_size = 32,
+        epochs = 150,
+        batch_size = 2000,
         validation_split = 0.2, 
         callbacks = earlystopping#,
         #verbose = FALSE
     )
+
+# model %>%          
+#     fit(training,trainingtarget, 
+#         epochs = 100,
+#         batch_size = 50,
+#         validation_split = 0.2, 
+#         callbacks = earlystopping#,
+#         #verbose = FALSE
+#     )
 ```
 
 #Model evaluieren:
@@ -174,6 +238,7 @@ model %>%
 model %>% evaluate(test, testtarget)
 pred <- model %>% predict(test)
 mean((testtarget-pred)^2) 
+paste("RMSE =", round(mean(sqrt((testtarget-pred)^2)), 4))
 ```
 
 #Ergebnis plotten:
@@ -191,7 +256,7 @@ result <- bind_cols(x1, y1) %>%
 
 
 ggplot(result, aes(measured, predicted)) + 
-    geom_point() + 
+    geom_point(alpha = 0.05) + 
     geom_abline(slope = 1, intercept = 0, color = "red", linetype = 2) + 
     facet_wrap(depth~.) + 
     theme_bw() + 
@@ -201,8 +266,8 @@ ggplot(result, aes(measured, predicted)) +
 
 #Modell speichern:
 ```{r, eval=FALSE}
-#filepath_tf <- "../data/derived_data/Model2/ANNI_Tensorflow_20230420"
-#keras::save_model_tf(model, filepath = filepath_tf, overwrite = FALSE)
+filepath_tf <- "../data/derived_data/Model2/ANNI_Tensorflow_20230824"
+keras::save_model_tf(model, filepath = filepath_tf, overwrite = TRUE)
 ```
 
 
