@@ -33,6 +33,9 @@ vignettes/*.pdf
 
 data/raw_data/DWDdata/
 data/raw_data/DWD_data/
+data/raw_data/Wetterdaten_Praxis/Radolan
+data/raw_data/Wetterdaten_Praxis/Hyras_Niederschlag_Karte/
 data/derived_data/DWD_data/
+
 
 *.zip
