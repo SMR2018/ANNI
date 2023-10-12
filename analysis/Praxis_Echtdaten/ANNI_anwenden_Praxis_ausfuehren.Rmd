@@ -7,21 +7,21 @@ date: "2023-04-24"
 ## Allgemeine Infos: Pfad zum Modell und Skalierungs-Daten
 ```{r}
 scaling_data_path <-  
-      "../../data/derived_data/scaling_data_addedVIs_20230524.csv"
-    #"../../data/derived_data/scaling_data_addedVIs.csv" #G1, klappt
-    #"../../data/derived_data/Model2/scaling_data.csv" #Goriginal, klappt
-#"../../data/derived_data/scaling_data_allDWD_pretrained.csv"
-filepath_tf <-  
-    "../../data/derived_data/Model3/ANNI_Tensorflow_20230524_neueVIs/"
-    # "../../data/derived_data/Model3/ANNI_Tensorflow_20230523_neueVIs/" ##G1, klappt
-    #"../../data/derived_data/Model2/ANNI_Tensorflow_20230420" #Goriginal, klappt
-#"../../data/derived_data/Model3/ANNI_Tensorflow_20230516_mitDWD/"
+    "../../data/derived_data/scaling_data_alle_Daten_DWD_20230824.csv"
+#"../../data/derived_data/Model2/scaling_data.csv" #Goriginal, klappt
+
+# filepath_tf <-  
+# #"../../data/derived_data/Model2/ANNI_Tensorflow_20230420" #Goriginal, klappt
+# #"../../data/derived_data/Model3/ANNI_Tensorflow_20230516_mitDWD/"
+
+filepath_tf1 <-  "../../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0010cm_20230824"
+filepath_tf2 <- "../../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht2030cm_20230824"
+filepath_tf3 <- "../../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht5060cm_20230824"
 
 auszufuehrendes_RMD <-  paste0(rstudioapi::getActiveProject(),
                                "/analysis/Praxis_Echtdaten/ANNI_anwenden_Praxis_default.Rmd")
 
-render_ANNI <- function(name1, betrieb, feld, satz, filepath_tf, scaling_data_path, 
-                        wetter_anbau_daten_csv, datum_aussaat){
+render_ANNI <- function(name1, betrieb, feld, satz, filepath_tf1, filepath_tf2, filepath_tf3, scaling_data_path, wetter_anbau_daten_csv, bewaesserungs_csv, datum_aussaat, start_nFK){
     rmarkdown::render(quiet = TRUE, clean = F,
                       input = auszufuehrendes_RMD,  
                       output_file = paste0(name1, ".pdf"), 
@@ -29,10 +29,12 @@ render_ANNI <- function(name1, betrieb, feld, satz, filepath_tf, scaling_data_pa
                           betrieb = betrieb,
                           feld = feld,
                           satz= satz,
-                          filepath_tf=filepath_tf,
+                          filepath_tf1=filepath_tf1, filepath_tf2=filepath_tf2, filepath_tf3=filepath_tf3,
                           scaling_data_path=scaling_data_path,
                           wetter_anbau_daten_csv=wetter_anbau_daten_csv,
-                          datum_aussaat = datum_aussaat)
+                          bewaesserungs_csv=bewaesserungs_csv,
+                          datum_aussaat = datum_aussaat,
+                          start_nFK = start_nFK)
     )
 }
 ```
@@ -43,67 +45,123 @@ render_ANNI <- function(name1, betrieb, feld, satz, filepath_tf, scaling_data_pa
 ```{r}
 betrieb = "Voll"
 feld <- "Mittelgewann"
-satz <- 1
-name1 <- paste("Fa", betrieb, "Feld", feld, format.Date(Sys.Date(), "%d_%m_%Y"), sep = "_")
+satz <- 2
+name1 <- paste("Fa", betrieb, "Feld", feld, "Satz", satz, format.Date(Sys.Date(), "%d_%m_%Y"), sep = "_")
 wetter_anbau_daten_csv <-  "../../data/derived_data/Wetterdaten_Praxis/Mittelgewann/daten_komplett.csv"
-datum_aussaat <- "2023-03-01"
 
-render_ANNI(name1 = name1, betrieb = betrieb, feld = feld, satz= satz, filepath_tf=filepath_tf,
-            scaling_data_path=scaling_data_path, wetter_anbau_daten_csv=wetter_anbau_daten_csv, datum_aussaat = datum_aussaat)
+bewaesserungs_csv = "../../data/derived_data/Wetterdaten_Praxis/Mittelgewann/bewaesserung.csv"
+datum_aussaat <-"2023-08-23"
+start_nFK = c(87.7, 87.0, 62.1, 35.8, 25.3, 33.9)
+
+render_ANNI(name1 = name1, betrieb = betrieb, feld = feld, satz= satz, 
+            filepath_tf1=filepath_tf1, filepath_tf2=filepath_tf2, filepath_tf3=filepath_tf3,
+            scaling_data_path=scaling_data_path, wetter_anbau_daten_csv=wetter_anbau_daten_csv, datum_aussaat = datum_aussaat, start_nFK=start_nFK, bewaesserungs_csv=bewaesserungs_csv)
 ```
 
-## Voll: Stichelpfad 
-```{r}
-#Ibi und Irmi zu gering am Anfang bei modellierten Werten? Diese bisher nicht im ANNI-Training...
-# df1 <- fread(wetter_anbau_daten_csv)
-# 
-# df2 <- df1 %>% mutate_at("ibi", ~ifelse(.<2.3,2.3,.)) %>%
-#     mutate_at("irmi", ~ifelse(.<16,16,.))
-# 
-# fwrite(df2, "../../data/derived_data/Wetterdaten_Praxis/Stichelpfad/daten_komplett.csv")
-```
-```{r, eval=FALSE}
-betrieb = "Voll"
-feld <- "Stichelpfad"
-satz <- 1
-name1 <- paste("Fa", betrieb, "Feld", feld, format.Date(Sys.Date(), "%d_%m_%Y"), sep = "_")
-wetter_anbau_daten_csv <-  paste0("../../data/derived_data/Wetterdaten_Praxis/", feld, "/daten_komplett.csv")
-datum_aussaat <- "2023-04-18"
+<!-- ## Voll: Stichelpfad  -->
+<!-- ```{r} -->
+<!-- #Ibi und Irmi zu gering am Anfang bei modellierten Werten? Diese bisher nicht im ANNI-Training... -->
+<!-- # df1 <- fread(wetter_anbau_daten_csv) -->
+<!-- #  -->
+<!-- # df2 <- df1 %>% mutate_at("ibi", ~ifelse(.<2.3,2.3,.)) %>% -->
+<!-- #     mutate_at("irmi", ~ifelse(.<16,16,.)) -->
+<!-- #  -->
+<!-- # fwrite(df2, "../../data/derived_data/Wetterdaten_Praxis/Stichelpfad/daten_komplett.csv") -->
+<!-- ``` -->
+<!-- ```{r, eval=FALSE} -->
+<!-- betrieb = "Voll" -->
+<!-- feld <- "Stichelpfad" -->
+<!-- satz <- 1 -->
+<!-- name1 <- paste("Fa", betrieb, "Feld", feld, format.Date(Sys.Date(), "%d_%m_%Y"), sep = "_") -->
+<!-- wetter_anbau_daten_csv <-  paste0("../../data/derived_data/Wetterdaten_Praxis/", feld, "/daten_komplett.csv") -->
+<!-- datum_aussaat <- "2023-04-18" -->
 
-render_ANNI(name1 = name1, betrieb = betrieb, feld = feld, satz= satz, filepath_tf=filepath_tf,
-            scaling_data_path=scaling_data_path, wetter_anbau_daten_csv=wetter_anbau_daten_csv, datum_aussaat = datum_aussaat)
-```
+<!-- render_ANNI(name1 = name1, betrieb = betrieb, feld = feld, satz= satz,  -->
+<!--             filepath_tf1=filepath_tf1, filepath_tf2=filepath_tf2, filepath_tf3=filepath_tf3, -->
+<!--             scaling_data_path=scaling_data_path, wetter_anbau_daten_csv=wetter_anbau_daten_csv, datum_aussaat = datum_aussaat, start_nFK=start_nFK, bewaesserungs_csv=bewaesserungs_csv) -->
+<!-- ``` -->
 
-## Haas: Kämmerwiese
+<!-- ## Haas: Kämmerwiese -->
+<!-- ```{r, eval=FALSE} -->
+<!-- betrieb = "Haas" -->
+<!-- feld <- "Kämmerwiese" -->
+<!-- satz <- 1 -->
+<!-- name1 <- paste("Fa", betrieb, "Feld", feld, format.Date(Sys.Date(), "%d_%m_%Y"), sep = "_") -->
+<!-- wetter_anbau_daten_csv <-  paste0("../../data/derived_data/Wetterdaten_Praxis/", feld, "/daten_komplett.csv") -->
+<!-- datum_aussaat <- "2023-04-27" -->
+
+<!-- render_ANNI(name1 = name1, betrieb = betrieb, feld = feld, satz= satz, filepath_tf=filepath_tf, -->
+<!--             scaling_data_path=scaling_data_path, wetter_anbau_daten_csv=wetter_anbau_daten_csv, datum_aussaat = datum_aussaat) -->
+<!-- ``` -->
+## Haas: Rosengarten
 ```{r, eval=FALSE}
 betrieb = "Haas"
-feld <- "Kämmerwiese"
+feld <- "Rosengarten"
 satz <- 1
-name1 <- paste("Fa", betrieb, "Feld", feld, format.Date(Sys.Date(), "%d_%m_%Y"), sep = "_")
-wetter_anbau_daten_csv <-  paste0("../../data/derived_data/Wetterdaten_Praxis/", feld, "/daten_komplett.csv")
-datum_aussaat <- "2023-04-27"
+name1 <- paste("Fa", betrieb, "Feld", feld, "Satz", satz, format.Date(Sys.Date(), "%d_%m_%Y"), sep = "_")
+wetter_anbau_daten_csv <-  
+    "../../data/derived_data/Wetterdaten_Praxis/Rosengarten/daten_komplett.csv"
+bewaesserungs_csv = "../../data/derived_data/Wetterdaten_Praxis/Rosengarten//bewaesserung.csv"
+datum_aussaat <-"2023-08-21"
+start_nFK = c(78.1, 79.0, 61.5, 37.8, 25.9, 34.0)
 
-render_ANNI(name1 = name1, betrieb = betrieb, feld = feld, satz= satz, filepath_tf=filepath_tf,
-            scaling_data_path=scaling_data_path, wetter_anbau_daten_csv=wetter_anbau_daten_csv, datum_aussaat = datum_aussaat)
+render_ANNI(name1 = name1, betrieb = betrieb, feld = feld, satz= satz, 
+            filepath_tf1=filepath_tf1, filepath_tf2=filepath_tf2, filepath_tf3=filepath_tf3,
+            scaling_data_path=scaling_data_path, wetter_anbau_daten_csv=wetter_anbau_daten_csv, datum_aussaat = datum_aussaat, start_nFK=start_nFK, bewaesserungs_csv=bewaesserungs_csv)
 ```
 
 
-#Fiktive Niederschlagsdaten für Plausibilitätsanalyse
-```{r}
-df <- data.table::fread("../../data/derived_data/Wetterdaten_Praxis/Kämmerwiese/daten_komplett.csv")
-# df2 <- df %>% mutate_at("ibi", ~ifelse(.<2,2,.)) %>%
-#      mutate_at("irmi", ~ifelse(.<16.4,16.4,.))
-df2 <- df %>% mutate(across(c("ibi", "irmi"), ~.+1.5)) 
-# plot(df$wasser_input_Vortag)
-#
-# df2 <- df %>% mutate_at("wasser_input_Vortag", ~sample(x = c(0,5,50,100), size = n(), replace = TRUE))
-# df2$niederschlag_mm_sum = cumsum(df2$wasser_input_Vortag)
-# plot(df2$wasser_input_Vortag)
-# plot(df2$niederschlag_mm_sum)
-#
-#
-data.table::fwrite(df2, "../../data/derived_data/Wetterdaten_Praxis/Kämmerwiese/daten_komplett2.csv")
+
+## Queckbrunnerhof: unter dem Gießwagen
+```{r, eval=FALSE}
+betrieb = "Queckbrunnerhof"
+feld <- "Giesswagen"
+satz <- 2#"vorAussaat"
+name1 <- paste("Fa", betrieb, "Feld", feld, "Satz", satz, format.Date(Sys.Date(), "%d_%m_%Y"), sep = "_")
+wetter_anbau_daten_csv <-  
+    #paste0("../../data/derived_data/Wetterdaten_Praxis/", feld, "/daten_komplett.csv")
+    "../../data/derived_data/Wetterdaten_Praxis/Queckbrunnerhof Giesswagen/daten_komplett.csv"
+bewaesserungs_csv = "../../data/derived_data/Wetterdaten_Praxis/Queckbrunnerhof Giesswagen/bewaesserung.csv"
+
+# datum_aussaat <-"2023-07-01"
+# start_nFK =  c(5.6,  6.3, 18.5, 34.3, 51.8, 63.8)
+datum_aussaat <-"2023-08-18"
+#start_nFK = c(15.51, 27.18, 38.84, 52.60, 66.37, 80.00) + 20
+start_nFK = c(68.8, 39.4, 29.9, 23.4, 35.8, 48.4) + 30 #+20
+#start_nFK = c(98.8, 88.8, 38.84, 53.53, 68.23, 82.92)
+
+render_ANNI(name1 = name1, betrieb = betrieb, feld = feld, satz= satz, 
+            filepath_tf1=filepath_tf1, filepath_tf2=filepath_tf2, filepath_tf3=filepath_tf3,
+            scaling_data_path=scaling_data_path, wetter_anbau_daten_csv=wetter_anbau_daten_csv, datum_aussaat = datum_aussaat, start_nFK=start_nFK, bewaesserungs_csv=bewaesserungs_csv)
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # Vergleich mit FAO56 (geschätzt)
 ```{r include=FALSE}
@@ -131,8 +189,8 @@ soil_data <- dataDWD(soil_link, base=dbase, dir = tempdir(), read = TRUE)
 ```{r}
 library(data.table)
 #,feldinfo, zeitraum, 
-anni_out <- fread(paste0("../../data/derived_data/ANNI_Praxis/Haas_Kämmerwiese_Satz_1_DAS1_32.csv"))
-wurzel_df <- fread(paste0("../../data/derived_data/Wetterdaten_Praxis/Kämmerwiese/durchwurzelte_schicht.csv"))
+anni_out <- fread(paste0("../../data/derived_data/ANNI_Praxis/Voll_Mittelgewann_Satz_2_DAS1_11.csv"))
+wurzel_df <- fread(paste0("../../data/derived_data/Wetterdaten_Praxis/Mittelgewann/durchwurzelte_schicht.csv"))
 
 anni_out <- anni_out %>% 
     mutate(schicht = substr(depth, 7,8)) %>%
@@ -147,16 +205,16 @@ anni_out <- anni_out %>%
 #VPGPM = potentielle Evapotranspiration über Gras nach Penman Monteith (FAO), in mm
 #max_mm_in_Schicht <- 90 #mm: 100% nFK bei Schichthöhe von 60cm
 #min_mm_in_Schicht <- 10 #mm: 0% nFK bei Schichthöhe von 60cm
-
+start_defizit_mm <- 4
 df <- 
     soil_data %>% select(Datum, FAO_mm = VPGPM) %>%
-    filter(Datum >= "2023-04-18") %>%
+    filter(Datum >= params1$datum_aussaat) %>%
     left_join(clim1, by = c("Datum" = "MESS_DATUM")) %>%
     mutate(tage_seit_aussaat = cumsum(c(1, diff(Datum)))) %>%
     mutate(Niederschlag_Vortag = c(NA, Niederschlag_mm[1:(n()-1)])) %>%
-    mutate(kc = case_when(tage_seit_aussaat < 20 ~ 0.7,
-                          tage_seit_aussaat < 40 ~ 0.9,
-                          tage_seit_aussaat >= 40 ~ 1)) %>%
+    mutate(kc = case_when(tage_seit_aussaat < 5 ~ 0.8,
+                          tage_seit_aussaat < 20 ~ 1.1,
+                          tage_seit_aussaat >= 20 ~ 1.5)) %>%
     mutate(KWB = kc * FAO_mm - Niederschlag_Vortag) %>%     ### KWB berechnen
     tidyr::drop_na() %>%
     left_join(wurzel_df, by = "tage_seit_aussaat") %>%
@@ -164,7 +222,7 @@ df <-
     mutate(max_mm_in_Schicht = 1.5*durchwurzelte_schicht_10cm,        ## Durchwurzelte Schicht wie ANNI
            min_mm_in_Schicht = (1/6)*durchwurzelte_schicht_10cm) %>%
     mutate(Wasserdefizit = cumsum(KWB)) %>%
-    mutate(Wassergehalt_mm = max_mm_in_Schicht - Wasserdefizit) %>% 
+    mutate(Wassergehalt_mm = max_mm_in_Schicht - Wasserdefizit -start_defizit_mm) %>% 
     mutate(nFK_geschaetzt = ((Wassergehalt_mm - min_mm_in_Schicht) / (max_mm_in_Schicht - min_mm_in_Schicht)) * 100)  ##nFK berechnen
 #df
 ```
@@ -175,7 +233,7 @@ ggplot() +
     geom_line(data = anni_out, aes(tage_seit_aussaat, nFK_anni, col = "ANNI")) + 
     geom_col(data = df, aes(tage_seit_aussaat, Niederschlag_mm*10), ) + 
     geom_hline(yintercept = 60, color = "grey70") + 
-    scale_y_continuous(limits = c(0,200), 
+    scale_y_continuous(limits = c(0,110), 
                        sec.axis = sec_axis(name = "Niederschlag (mm)", trans = ~./10)) + 
     theme_bw() + 
     theme(panel.grid = element_blank())
