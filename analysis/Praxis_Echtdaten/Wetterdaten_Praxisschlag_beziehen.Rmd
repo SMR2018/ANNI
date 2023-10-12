@@ -68,22 +68,180 @@ clim <- dataDWD(url = link, read=TRUE,
 #passende Parameter auswählen:
 ```{r, eval=T}
 clim_filtered <- clim %>% 
+    #mutate(wasser_input_mm = NA) %>% 
     dplyr::select(datum = MESS_DATUM,
                   Tmean_gradC = TMK,
                   Tmin_gradC = TNK,
-                  Tmax_gradC =TXK,
+                  Tmax_gradC =TXK#,
                   #relLuftfeuchte_mean_prozent = UPM, # aus eigener Datei unten
                   #niederschlag_mm_sum = RSK, ##herausnehmen für ANNI?? 
-                  wasser_input_mm = RSK#, ##stattdessen Parameter hinzugefügt für ANNI?? 
+                  # wasser_input_mm#RSK#, ##stattdessen Parameter hinzugefügt für ANNI?? 
     ) %>%
     mutate_at("datum", ~as_date(.))
 
-rm(clim)
+#Falls der Wert für "vorgestern" noch nicht vorhanden ist:
+df_vorgestern <- clim_filtered %>% slice(n()) %>%
+    uncount(2) %>%
+    mutate(across(datum, ~.+c(1,2)))
+
+if(tail(clim_filtered$datum, n=1) < (Sys.Date()-2)) {
+    clim_filtered <- bind_rows(clim_filtered, df_vorgestern)
+    }
+
+#Falls der Wert für "gestern" noch nicht vorhanden ist:
+if(tail(clim_filtered$datum, n=1) < (Sys.Date()-1)) {
+    clim_filtered <- bind_rows(clim_filtered, df_vorgestern[-1])
+    }
+#rm(clim)
 ```
+
+
+
+# Hyras-Daten einlesen und Niederschlag für Schlag-Koordinaten auswerten
+
+```{r, message=FALSE}
+library(ncdf4)
+library(lubridate)
+library(purrr)
+path0 <- "../../data/raw_data/Wetterdaten_Praxis"
+path_karte <- paste0(path0,"/Hyras_Niederschlag_Karte")
+file <- paste0(path_karte, "/daily_hyras_de_precipitation_pr_hyras_1_2023_v5-0_de.nc")
+regen_karte <- nc_open(file)
+#print(regen_karte)
+
+# Zeit auslesen:
+time <- ncvar_get(regen_karte,"time")
+time_rescaled <- as_datetime(as.numeric(time)*60*60,
+                             origin = as_datetime("1931-01-01 00:00:00"), 
+                             tz = "UTC")
+
+# Koordinaten auslesen
+xx <- ncvar_get(regen_karte, "x_bnds")[1,]
+yy <- ncvar_get(regen_karte, "y_bnds")[1,]
+lonlat <- as.matrix(expand.grid(xx,yy))
+
+
+tmp_array <- ncvar_get(regen_karte,"pr")
+tage <- dim(tmp_array)[3]
+letzte_beobachtung <- as_date("2023-01-01") + tage - 1
+```
+
+```{r}
+# Koordinatensystem umwandeln
+library(sf)
+p1 <- st_point(c(params$lon,params$lat)) 
+sfc <- st_sfc(p1, crs = 4326)
+sfc2 <- sf::st_transform(x = sfc, crs = 3034)
+coords1 <- sf::st_coordinates(sfc2)
+
+# Distanz berechnenn und nächsgelegenes Pixel auswählen
+diff1 <- sqrt((lonlat[,"Var1"] - coords1[1])^2 + (lonlat[,"Var2"] - coords1[2])^2)
+
+idx2 <- which(diff1 == min(diff1))
+ergebnis_df <- lonlat[idx2,]
+
+p2 <- st_point(as.numeric(ergebnis_df))
+sfc2 <- st_sfc(p1, crs = 3034)
+
+#Prüfung: richtiges Pixel ausgewählt in Coord:
+#sf::st_coordinates(sf::st_transform(x = sfc, crs = 4326))
+```
+
+```{r}
+detach("package:ncdf4", unload = TRUE)
+# Zeitreihe Niederschlag auslesen:
+x_idx <- which(xx == ergebnis_df[1]) #lon
+y_idy <- which(yy == ergebnis_df[2]) #lat
+
+regen_mm <- tmp_array[x_idx,y_idy,1:tage]
+
+df_niederschlag <- data.frame(datum = as_date(paste0(year(letzte_beobachtung), "-01-01")) + 1:tage -1,
+                              wasser_input_mm = regen_mm) %>% 
+    filter(datum >= params$datum_aussaat) 
+# Niederschlag des letzten Tages: aus stündlichen Werten??
+#...left join mit Klima-Daten
+
+```
+
+## Radolan-Daten für "gestern" zusammenstellen (stündliche Werte)
+
+```{r}
+library(raster)
+
+#Daten einlesen
+gestern <- Sys.Date() -1
+gestern_numeric <- format.Date(gestern, "%m%d")
+
+path_radolan <- paste0(path0, "/Radolan")
+path_unzip <- paste0(path_radolan, "/Niederschlag_2023",gestern_numeric)
+file_list <- list.files(path_unzip,
+                        #paste(path_radolan, dir_name_radolan, sep = "/"), 
+                        full.names = T)
+r = purrr::map(file_list, ~raster::raster(.)) #aus Paket {raster}
+
+# Projektjon anpassen: für das erste Raster: Index finden
+projection(r[[1]]) <- CRS("+proj=stere +lat_0=90.0 +lon_0=10.0 +lat_ts=60.0 +a=6370040 +b=6370040 +units=m")
+r2 <- projectRaster(r[[1]], crs=3034)  #UTM 32N
+
+# Distanz berechnenn und nächsgelegenes Pixel auswählen
+lonlat_radolan <- coordinates(r2)
+diff1 <- sqrt((lonlat_radolan[,"x"] - coords1[1])^2 + (lonlat_radolan[,"y"] - coords1[2])^2)
+idx2 <- which(diff1 == min(diff1))
+
+#Niederschlagwerte aller Stunden-Karten für identifiziertes Pixel auslesen und auf Tageswert summieren
+niederschlag_gestern <- map(r, ~values(.)[idx2]) %>% unlist %>% sum
+
+df_niederschlag_gestern <- data.frame(
+    datum = Sys.Date()-1,
+    wasser_input_mm = niederschlag_gestern / 10) #Niederschlag RADOLAN: 1/10mm
+```
+
+```{r}
+#Pakete detachen um Konflikte mit Funktionen "select" und "filter" zu vermeiden.
+#detach("package:rgdal", unload = TRUE)
+detach("package:raster", unload = TRUE)
+# detach("package:sp", unload = TRUE)
+detach("package:sf", unload = TRUE)
+```
+
+
+#Niederschlags-Informationen aus beiden Quellen zusammenstellen
+```{r}
+if(tail(df_niederschlag$datum, 1) == (Sys.Date() -1)) { 
+    # Prüfung: Ist der gestrige Niederschlags-Wert bereits in der Tabelle enthalten? 
+    # (z.B. wenn Daten nach 13 Uhr abgefragt wurden)
+    df_niederschlag_final <- df_niederschlag
+} else {
+    
+    df_niederschlag_final <- bind_rows(df_niederschlag, df_niederschlag_gestern)
+}
+
+# Daten mit DWD-Klima-Stationsdaten verknüpfen
+clim_filtered <- clim_filtered %>% left_join(df_niederschlag_final, by = "datum") %>%
+    mutate(across(wasser_input_mm, ~ifelse(is.na(.), 0, .)))
+```
+
+
+#Bewässerung hinzufügen:
+```{r}
+bewaesserung_df <- fread(params$bewaesserungs_csv)
+bewaesserung_df <- bewaesserung_df %>% 
+    mutate(across(datum_bewaesserung, 
+                  ~as_date(., format = "%d.%m.%y"))) %>%
+    select(datum_bewaesserung, bewaesserungs_menge_mm) %>% drop_na()
+
+clim_filtered_joined <- 
+    clim_filtered %>% left_join(bewaesserung_df, by = c("datum" = "datum_bewaesserung")) %>%
+    mutate(across(bewaesserungs_menge_mm, ~ifelse(is.na(.),0,.))) %>%
+    mutate(across(wasser_input_mm, ~.+bewaesserungs_menge_mm)) %>%
+    select(-bewaesserungs_menge_mm)
+```
+
+
 
 #Daten speichern:
 ```{r}
-fwrite(clim_filtered, paste0(path_derived_data, "/klima.csv"))
+fwrite(clim_filtered_joined, paste0(path_derived_data, "/klima.csv"))
 ```
 
 
@@ -122,7 +280,7 @@ tidy_solar_df <- solar2 %>%
     
     #Fehlende Werte entfernen:
     filter(!is.na(GS_10)) %>%
-
+    
     #nicht alle Daten sind in 10-Minuten-Incrementen. Hier auffüllen, um später Tages-Summe korrekt zu bilden
     complete(MESS_DATUM = seq.POSIXt(min(MESS_DATUM), max(MESS_DATUM), by="10 min")) %>%
     
@@ -136,8 +294,8 @@ tidy_solar_df <- solar2 %>%
     ## jetzt sollte alles in 10 Minuten-Abständen sein!
     
     filter(n > anz/2) %>% 
-
-        #Fehlende Werte approximieren
+    
+    #Fehlende Werte approximieren
     group_by(datum) %>%
     mutate_at("GS_10", ~round(zoo::na.approx(.,  na.rm=FALSE, rule = 2),1))
 ```
@@ -155,7 +313,13 @@ solar_daily <- tidy_solar_df %>% group_by(datum) %>%
     summarise(globalstrahlung_Wh_m2 = round(sum(GS_10 / zeit_intervall , na.rm = TRUE) * cm2, 1)) %>%
     filter(globalstrahlung_Wh_m2 != 0)
 
-
+#Fehlende Werte auffüllen mit Monats-Mittelwert
+solar_daily <- solar_daily %>% complete(datum = seq.Date(min(solar_daily$datum), max(solar_daily$datum),1)) %>%
+    mutate(monat = month(datum)) %>% 
+    group_by(monat) %>%
+    mutate(across(globalstrahlung_Wh_m2, ~ifelse(is.na(.), mean(., na.rm = TRUE), .))) %>%
+    ungroup() %>%
+    select(-monat)
 ```
 
 #Daten speichern:
@@ -176,8 +340,8 @@ link <- selectDWD(id = id_moist,
 
 #Download data from the DWD CDC FTP Server uncomment to load!
 df <- dataDWD(url = link, read=TRUE,
-                dir = tempdir(),
-                quiet=TRUE, force=NA) %>% 
+              dir = tempdir(),
+              quiet=TRUE, force=NA) %>% 
     select(MESS_DATUM,RF_TER) %>%
     filter(MESS_DATUM >= as_datetime("2023-01-01"))
 ```
@@ -231,8 +395,8 @@ link <- selectDWD(id = id_wind,
 
 #Download data from the DWD CDC FTP Server uncomment to load!
 df <- dataDWD(url = link, read=TRUE,
-                dir = tempdir(),
-                quiet=TRUE, force=NA) %>%
+              dir = tempdir(),
+              quiet=TRUE, force=NA) %>%
     select(MESS_DATUM, FF_10) %>%
     filter(MESS_DATUM >= as_datetime("2023-01-01"))
 ```
