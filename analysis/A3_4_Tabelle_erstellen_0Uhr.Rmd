@@ -1,0 +1,158 @@
+---
+title: "R Notebook"
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ggnewscale)
+library(tidyr)
+library(DBI)
+```
+
+## Verbindung zur GeoSenSys-Datenbank:
+```{r}
+path0 <- "GeoSenSys2020/Data_2020/Database_Protokolle/Database_CSV_Tabellen_HGU/HGU_GeoSenSys_V3_6.db"
+# Verbindung zur Datenbanl herstellen:
+path1 <- ifelse(Sys.info()["user"] == "samantha_machgu",
+                "~/Documents/Mac_Github/", 
+                "../../"
+)
+db <- paste0(path1, path0) # DB in other R-Project
+```
+
+
+#ISARIA einlesen:
+```{r}
+path2 <- "../../GeoSenSys2020/Auswertung_Saetze/ISARIA_Alignment/"
+file2 <- "HGU_ISARIA_extrapolated_smoothed_HGU_DLR.csv"
+isaria <- fread(file = paste0(path2, file2)) %>%
+    mutate_at("datum_messung", ~as_date(.)) %>%
+    filter(Ort == "HGU" & variante_acronym == "N100Wfull") %>% # später noch um DLR-Wetter ergänzen!
+    group_by(satz_id, datum_messung) %>%
+    summarise(across(c("ibi", "irmi"), ~mean(., na.rm = TRUE)))
+rm(path2, file2)
+```
+
+```{r}
+df_wetter_complete <- fread(file = "../data/derived_data/wetter_2020_2022_20220805.csv", sep = ";")
+df_wetter_complete <- df_wetter_complete %>% mutate_at("datum_wetter", ~as_date(.)) %>%
+    select(satz_id, datum_wetter, 
+           #T0020_nFK,T2040_nFK, T4060_nFK,
+           Tmean_gradC,
+           Tmin_gradC,
+           Tmax_gradC,
+           relLuftfeuchte_mean_prozent,
+           relLuftfeuchte_min_prozent,
+           relLuftfeuchte_max_prozent,
+           globalstrahlung_Wh_m2,
+           windgeschwindigkeit_m_s,
+           niederschlag_mm_sum = niederschlag_mm, #niederschlag_mm_sum
+           
+           #T0020_nFK_Vortag,
+           #T2040_nFK_Vortag,
+           #tage_seit_aussaat,
+           Tmean_th9_25_gradC,
+           #ibi,
+           #irmi
+    ) %>%
+    group_by(satz_id) %>%
+    mutate(#wasser_input_Vortag = 1:n(), erst nach Bewässerung!
+        tage_seit_aussaat = 1:n())
+```
+
+#Bewässerung (Mittelwert über Wiederholungen pro Tag) für N100Wfull
+```{r}
+db1 <- dbConnect(RSQLite::SQLite(), db)
+df_bewaesserung <- dbGetQuery(db1, "SELECT 
+                    Spinat_saetze.satz_id, 
+                    --Varianten.variante_acronym,
+                    datum_bewaesserung, 
+                    AVG(wassermengen_mm) AS bewaesserung_mm
+                    
+                    FROM Bewaesserung
+                    LEFT JOIN Parzellen ON Bewaesserung.parzelle_id = Parzellen.parzelle_id
+                    LEFT JOIN Varianten ON Parzellen.variante_id = Varianten.variante_id
+                    LEFT JOIN Spinat_saetze ON Varianten.satz_id = Spinat_saetze.satz_id
+                    WHERE variante_acronym = 'N100Wfull'
+                    GROUP BY Spinat_saetze.satz_id, datum_bewaesserung
+                    ;")
+df_bewaesserung <- df_bewaesserung %>% mutate(across("datum_bewaesserung", ~as_date(.)))
+dbDisconnect(db1)
+```
+
+
+
+#To-Do: nFK: Wert für "heute": 00:00 Uhr heute, da sonst Bewässerung und Niederschlag des jeweiligen Tages nicht berücksichtigt werden kann!
+
+```{r}
+db1 <- dbConnect(RSQLite::SQLite(), db)
+df_tensio<- dbGetQuery(db1, "SELECT 
+                    Spinat_saetze.satz_id,
+                    datetime(zeit_messung, 'unixepoch') AS zeit_messung,
+                    Date(zeit_messung, 'unixepoch') AS datum_messung,
+                    strftime('%H', datetime(zeit_messung, 'unixepoch')) AS Stunde,
+                    AVG(B0020_nFK_prozent) AS T0020_nFK,
+                    AVG(B2040_nFK_prozent) AS T2040_nFK,
+                    AVG(B4060_nFK_prozent) AS T4060_nFK
+                    
+                    FROM Tensiometer
+                    LEFT JOIN Parzellen ON Tensiometer.parzelle_id = Parzellen.parzelle_id
+                    LEFT JOIN Varianten ON Parzellen.variante_id = Varianten.variante_id
+                    LEFT JOIN Spinat_saetze ON Varianten.satz_id = Spinat_saetze.satz_id
+                    WHERE variante_acronym = 'N100Wfull' AND Stunde = '00'
+                    GROUP BY Spinat_saetze.satz_id, Varianten.variante_id, zeit_messung
+                    ;")
+dbDisconnect(db1)
+df_tensio <- df_tensio %>% 
+    select(-zeit_messung, -Stunde) %>% #nur für Berechnung oben
+    mutate(across("datum_messung", ~as_date(.)))
+```
+# Alle Daten zusammenfassen:
+```{r}
+df_complete <- df_wetter_complete %>%
+    left_join(df_bewaesserung, 
+              by = c("satz_id","datum_wetter"= "datum_bewaesserung")) %>%
+    mutate(across("bewaesserung_mm", ~ifelse(is.na(.), 0, .))) %>%
+    mutate(wasserinput_heute = niederschlag_mm_sum + bewaesserung_mm) %>%
+    group_by(satz_id) %>%
+    mutate(wasser_input_Vortag = c(0, wasserinput_heute[1:(n()-1)])) %>%
+    ungroup() %>%
+    left_join(df_tensio, by = c("satz_id", "datum_wetter" = "datum_messung")) %>% 
+    group_by(satz_id) %>%
+    mutate(across(c(T0020_nFK, T2040_nFK, T4060_nFK), ~ c(NA, .[1:(n()-1)]), 
+                  .names = "{.col}_Vortag")) %>%
+    left_join(isaria, by = c("satz_id", "datum_wetter" = "datum_messung")) %>%
+    ungroup() %>%
+    drop_na()
+```
+
+# Selektieren:
+```{r}
+df_save <- df_complete %>% 
+    select(T0020_nFK,T2040_nFK, T4060_nFK,
+           Tmean_gradC,
+           Tmin_gradC,
+           Tmax_gradC,
+           relLuftfeuchte_mean_prozent,
+           relLuftfeuchte_min_prozent,
+           relLuftfeuchte_max_prozent,
+           globalstrahlung_Wh_m2,
+           windgeschwindigkeit_m_s,
+           niederschlag_mm_sum,# = niederschlag_mm, #niederschlag_mm_sum
+           wasser_input_Vortag,
+           T0020_nFK_Vortag,
+           T2040_nFK_Vortag,
+           T4060_nFK_Vortag,
+           tage_seit_aussaat,
+           Tmean_th9_25_gradC,
+           ibi,
+           irmi)
+```
+
+```{r}
+#fwrite(df_save, file = "../data/derived_data/input_tabelle_2020_2022_20230802_20cm_complete.csv", sep = ";", dec = ".")
+```
+
