@@ -1,0 +1,490 @@
+---
+title: "3.2 Tabelle erstellen anhand modellierter kc-Werte und ISARIA-Daten"
+author: "Samantha Rubo"
+date: '2023-07-27'
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ggnewscale)
+library(tidyr)
+library(DBI)
+```
+
+# Wetterdaten einlesen
+```{r}
+df_wetter <- fread(file = "../data/derived_data/wetter_2020_2022_20220805.csv", sep = ";")
+df_wetter <- df_wetter %>% mutate_at("datum_wetter", ~as_date(.)) %>%
+    select(satz_id, datum_wetter, FAO56_mm, niederschlag_mm)
+```
+
+#bewaesserung einlesen:
+```{r}
+bewaesserung <- fread("../data/derived_data/bewaesserung_2020_2022_20220805.csv") %>%
+    mutate_at("datum_bewaesserung", ~as_date(.)) %>%
+    as_tibble()
+```
+
+## Verbindung zur GeoSenSys-Datenbank:
+```{r}
+path0 <- "GeoSenSys2020/Data_2020/Database_Protokolle/Database_CSV_Tabellen_HGU/HGU_GeoSenSys_V3_6.db"
+# Verbindung zur Datenbanl herstellen:
+path1 <- ifelse(Sys.info()["user"] == "samantha_machgu",
+                "~/Documents/Mac_Github/", 
+                "../../"
+)
+db <- paste0(path1, path0) # DB in other R-Project
+```
+
+## ISARIA-Daten anfügen
+```{r}
+path2 <- "../../GeoSenSys2020/Auswertung_Saetze/ISARIA_Alignment/"
+file2 <- "HGU_ISARIA_extrapolated_smoothed_HGU_DLR.csv"
+isaria <- fread(file = paste0(path2, file2)) %>%
+    mutate_at("datum_messung", ~as_date(.)) %>%
+    filter(Ort == "HGU") # später noch um DLR-Wetter ergänzen!
+
+rm(path2, file2)
+```
+
+#Kc-Werte auslesen
+```{r}
+db1 <- dbConnect(RSQLite::SQLite(), db)
+df_kc <- dbGetQuery(db1, "SELECT DISTINCT
+                    satz_id,
+                    variante_H2O,
+                    --variante_id,
+                    kc_stadium1,
+                    kc_stadium2
+                    FROM Varianten;")
+
+dbDisconnect(db1)
+```
+
+# kc-Werte an ISARIA (IBI) anfügen:
+```{r}
+isaria_kc <- isaria %>%
+    select(satz_id, datum_messung, variante_acronym, variante_H2O, wiederholung, ibi) %>%
+    left_join(df_kc, by = c("satz_id", "variante_H2O")) %>% #kc-Tabelle anfügen
+    group_by(satz_id, variante_acronym, variante_H2O, wiederholung) %>%
+    mutate(kc_aus_ibi = scales::rescale(ibi,
+                                        to = c(unique(kc_stadium1), unique(kc_stadium2)))) %>%
+    select(-kc_stadium1, -kc_stadium2) %>%
+    mutate(das = 1:n())
+
+
+ggplot(isaria_kc,
+       aes(das, kc_aus_ibi,
+           linetype = as.factor(satz_id), color = variante_acronym)) +
+    stat_summary(geom = "line", fun = "mean") +
+    theme_bw() +
+    theme(panel.grid = element_blank())
+```
+
+# Tabellen: Wetter-Daten, Bewässerung und ISARIA mit kc-Werten kombinieren:
+```{r}
+df_wasserbilanz <- df_wetter %>%
+    left_join(isaria_kc, by = c("satz_id", "datum_wetter" = "datum_messung")) %>%
+    left_join(bewaesserung, by = c("satz_id", "variante_H2O", "wiederholung",
+                                   "datum_wetter" = "datum_bewaesserung")) %>%
+    mutate_at("bewaesserung_mm", ~ifelse(is.na(.), 0, .)) %>%
+    mutate(wasser_input_mm = niederschlag_mm + bewaesserung_mm) %>%
+    filter(satz_id > 2) %>%
+    mutate(ET = FAO56_mm * kc_aus_ibi) #%>%
+#select(satz_id, datum_wetter, das, variante_acronym, wiederholung, wasser_input_mm, ET)
+
+df_wasserbilanz
+```
+
+
+# KWB berechnen:
+```{r}
+df_wasserbilanz <- df_wasserbilanz %>%
+    group_by(satz_id, variante_acronym, wiederholung) %>%
+    mutate(cumsum_ET_mm = cumsum(ET),
+           cumsum_wasser_input_mm = cumsum(wasser_input_mm)) %>%
+    mutate(wasserdefizit = cumsum_wasser_input_mm - cumsum_ET_mm) %>%
+    #Falls Auswaschung: nur Tages-Auswaschung nehmen, nicht kumulieren mit vortag!:
+    mutate(wasserdefizit2 = #ifelse(wasserdefizit > 0,0, wasserdefizit))
+               ifelse(wasserdefizit > 0, wasser_input_mm - ET, wasserdefizit) 
+    )
+
+##Anpassung erforderlich: wenn mehr regen, als kc-Variante benötigt: kc erhöhen??
+```
+
+# KWB plotten:
+```{r}
+p1 <- ggplot(df_wasserbilanz, aes(das, cumsum_ET_mm,
+                                  linetype = as.factor(satz_id),
+                                  color = variante_acronym)) +
+    
+    stat_summary(geom = "line", fun = "mean") +
+    theme_bw() +
+    theme(panel.grid = element_blank()) +
+    xlab("Tage seit Aussaat") + ylab("Kumulierte Evapotranspiration (mm)")
+p1
+#p1 %+% aes(y=cumsum_wasser_input_mm) + ylab("Wasserinput (mm)")
+```
+
+```{r}
+#ohne Threshold (also mit Auswaschung??)
+p2 <- p1 %+% aes(y = wasserdefizit) +
+    geom_hline(yintercept=0, color = "grey40") +
+    ylab("Wasserdefizit (mm)")
+p2
+
+#mit Threshold
+p3 <- p1 %+% aes(y = wasserdefizit2) +
+    geom_hline(yintercept=0, color = "grey40") +
+    ylab("Wasserdefizit (mm)")
+
+p3
+```
+# Ausgleichende Bewässerung: nur die Stufe N100Wfull ist relevant!!
+```{r}
+df <- df_wasserbilanz %>% filter(variante_acronym == "N100Wfull")
+
+p2 %+% (data=df)
+
+p3 %+% (data=df)
+```
+
+
+
+
+# nFK berechnen:
+```{r}
+B20_mm_bei100nFK <- 49.3/30*20
+B40_mm_bei100nFK <- 46.1/30*20
+B60_mm_bei100nFK <- 43.4/30*20
+
+```
+
+## wenn modelliert: dann auf 10 cm??
+```{r}
+df <- df %>% 
+    group_by(satz_id, wiederholung) %>%
+    mutate(durchwurzelte_Schicht = scales::rescale(ibi, to = c(2,40))) %>%
+    
+    mutate(mm_bei_100nFK = 49.3/30 * durchwurzelte_Schicht) %>%
+    group_by(satz_id, datum_wetter, wiederholung) %>%
+    ## mm: unter jeweilige schicht berücksichtige
+    mutate(wasserdefizit_nFK =  wasserdefizit2 / mm_bei_100nFK * 100) %>% 
+    mutate(nFK = 100+wasserdefizit_nFK)
+
+p3 %+% (data=df) + aes(y = nFK, col = NULL) + geom_hline(yintercept = 60) +
+    geom_line(aes(y=durchwurzelte_Schicht, col = "durchwurzelte Schicht"))
+```
+```{r}
+df <- df %>%
+    mutate(schicht_cm = cut(x = durchwurzelte_Schicht, 
+                            breaks = c(0,20,40,60), 
+                            labels = c(20,40,60)) %>% as.character %>% as.numeric, 
+           .after = "durchwurzelte_Schicht")
+```
+
+#To-Do: mean für wiederholung erstellen??
+```{r}
+df %>% #ungroup() %>%
+    ##   mutate(schicht_anteil_prozent = 100 * (durchwurzelte_Schicht - (schicht_cm-20))/20) %>% 
+    ##    mutate(across(schicht_anteil_prozent, ~ifelse(durchwurzelte_Schicht <= 20, 100, .)
+    ##    )) %>%
+    select(datum_wetter, wasserdefizit2, durchwurzelte_Schicht, schicht_cm) %>%#, schicht_anteil_prozent)  %>%
+    # pivot_wider(names_from = schicht_cm, values_from = schicht_anteil_prozent, names_prefix = "anteil_in_") %>%
+    # mutate(across(anteil_in_40, ~ifelse(is.na(.), 0, .))) %>%
+    # mutate(across(anteil_in_20, ~100)) %>% #-anteil_in_40)) %>% #Die oberste Schicht enthält immer 100%??
+    # mutate(anteil_in_60 = 0) %>%
+    # mutate(nFK_mm_0020 = B20_mm_bei100nFK + wasserdefizit2*0.01*anteil_in_20,
+    #        nFK_mm_2040 = B40_mm_bei100nFK + wasserdefizit2*0.01*anteil_in_40,
+    #        nFK_mm_4060 = ifelse(abs(wasserdefizit2) > sum(B20_mm_bei100nFK,B40_mm_bei100nFK),
+    #                             B60_mm_bei100nFK + wasserdefizit2 - sum(B20_mm_bei100nFK,B40_mm_bei100nFK),
+    #                             B60_mm_bei100nFK))
+    
+    mutate(nFK_mm_0020 = B20_mm_bei100nFK,
+           nFK_mm_2040 = B40_mm_bei100nFK,
+           nFK_mm_4060 = B60_mm_bei100nFK) %>%
+    # mutate(across(nFK_mm_0020, ~ifelse(abs(wasserdefizit2) < ., . + wasserdefizit2, 0)),
+    #        across(nFK_mm_2040, ~ifelse(abs(wasserdefizit2) > B20_mm_bei100nFK, 
+    #                                    . + B20_mm_bei100nFK + wasserdefizit2, 
+    #                                    B40_mm_bei100nFK)))
+    mutate(across(nFK_mm_0020, ~. + wasserdefizit2)) %>% #nacher noch korrigieren.
+    mutate(across(nFK_mm_2040, 
+                  ~case_when(nFK_mm_0020 < 0 ~ . + nFK_mm_0020,
+                             nFK_mm_0020 > (B20_mm_bei100nFK * 1.2) ~ . + nFK_mm_0020-(B20_mm_bei100nFK * 1.2),
+                             T ~ .))) %>%  #nachher min max korrigieren
+    mutate(across(nFK_mm_4060, 
+                  ~case_when(nFK_mm_2040 < 0 ~ . + nFK_mm_2040,
+                             nFK_mm_2040 > (B40_mm_bei100nFK * 1.2) ~ . + nFK_mm_2040-(B40_mm_bei100nFK * 1.2),
+                             T ~ .)))
+
+
+```
+# Auswaschung in die nächste Schicht bei 120% nFK
+```{r}
+df %>% ungroup() %>%
+    select(datum_wetter, wasserdefizit2, durchwurzelte_Schicht, schicht_cm) 
+```
+```{r}
+m1 <- matrix(rep(c(20,40,60), each = nrow(df)), ncol = 3, byrow = F)
+m2 <- matrix(rep(c(B20_mm_bei100nFK,B40_mm_bei100nFK,B60_mm_bei100nFK), 
+                 each = nrow(df)), ncol = 3, byrow = F) #mm in Schicht bei 100% nFK
+m3 <- (m2 * 1.2) - m2 #max_mm pro Schicht bevor Auswaschung
+m4 <- m2 %>% t %>% as_tibble() %>% mutate(across(everything(), ~cumsum(.))) %>% t %>% as.matrix() #max_mm
+m5 <- matrix(rep(df$wasserdefizit2, times = 3), ncol = 3, byrow = F) #Wasserdef-matrix
+
+head(m1); head(m2); head(m3); head(m4); head(m5)
+```
+
+
+
+```{r}
+m0 <- cbind(rep(0, times=nrow(df)), m4[,1:(NCOL(m4)-1)]) # cumsum mit 0, 32, 63
+m6 <- (-1*m5) > m0#Welche Tiefe wird benötigt?
+m8 <- -1*m5 > 0 #Wasserdefizit ja oder nein
+m9 <- m5 * (m6*m8)
+m10 <- abs(m9) > m0 # Wasserdefizit größer als in Schicht möglich? ja nein
+head(m9); head(m10)
+
+m11 <- m9 + m0*m10
+idx <- (-1*m11) > m4
+m11[idx] <- -1*m4[idx]
+m11[c(1:10, 180:200),]
+
+#as.vector(m11[,1])
+plot(m11[,1], type = "lines")
+lines(m11[,2], col ="red")
+lines(m11[,3], col ="green")
+```
+
+
+# Wieviel mm Bodenwasser in 20-cm-Schicht sind 0% nFK?
+```{r}
+teile <- c(6,3,1) #c(9,3,1) #c(2,1,0.5)
+mm_PWP <- 5 #5 mm bei 0% nFK (für alle Schichten)
+df_teile <- df %>% ungroup %>% 
+    #filter(satz_id %in% c(3,5,6) & variante_acronym =="N100Wfull" & wiederholung =="a") %>% 
+    #select(wasserdefizit2, durchwurzelte_Schicht) %>%
+    mutate(nFK_mm_0020 = B20_mm_bei100nFK + wasserdefizit2/sum(teile)*teile[1],
+           nFK_mm_2040 = B40_mm_bei100nFK + wasserdefizit2/sum(teile)*teile[2],
+           nFK_mm_4060 = B60_mm_bei100nFK + wasserdefizit2/sum(teile)*teile[3]) %>%
+    mutate(across(nFK_mm_2040, ~ifelse(nFK_mm_0020 < 0, . +abs(nFK_mm_0020),.)),
+           across(nFK_mm_4060, ~ifelse(nFK_mm_2040 < 0, . +abs(nFK_mm_2040),.))) %>%
+    mutate(across(c(nFK_mm_0020, nFK_mm_2040, nFK_mm_4060), ~ifelse(.<0,0,.))) %>%
+    mutate(nFK_prozent_0020 = scales::rescale(nFK_mm_0020, from = c(mm_PWP,B20_mm_bei100nFK), to=c(0,100)),
+           nFK_prozent_2040 = scales::rescale(nFK_mm_2040, from = c(mm_PWP,B40_mm_bei100nFK), to=c(0,100)),
+           nFK_prozent_4060 = scales::rescale(nFK_mm_4060, from = c(mm_PWP,B60_mm_bei100nFK), to=c(0,100))) %>%
+    mutate(across(c(nFK_prozent_0020, nFK_prozent_2040, nFK_prozent_4060), 
+                  ~ifelse(.<0,0,.)))
+
+
+ggplot(df_teile, aes(das)) + 
+    geom_hline(yintercept = 60)+geom_hline(yintercept = 100)+
+    stat_summary(geom = "line", fun="mean", aes(y=nFK_prozent_0020, col = "0-20cm")) + 
+    stat_summary(geom = "line", fun="mean", aes(y=nFK_prozent_2040, col = "20-40cm")) + 
+    stat_summary(geom = "line", fun="mean", aes(y=nFK_prozent_4060, col = "40-60cm")) + 
+    facet_wrap(.~satz_id) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+
+```
+
+#Nächste Schritte:
+-Wetterdaten von z.B. Geisenheim für die letzten x Jahre laden
+-ET0 berechnen
+-Startwert Aussaaten: 1.3. - 1.10. monatlich
+-Auflaufdatum berechnen
+-Ibi und Irmi berechnen
+-kc auf Grundlage ibi berechnen
+-Wasserdefizit in 0-60cm Tiefe
+-Anteile für 0-20, 20-40, 40-60 cm Tiefe
+-nFK daraus pro Schicht
+
+--> Gleiches für verschiedene Bodenarten.
+
+
+
+```{r}
+path1 <- "~/Documents/Mac_Github/DWD_database_ANNI2/data/derived_data/DWD_data/Nutzbare_Feldkapazität_AMBAV/Xdaily/"
+file1 <- list.files(path1, pattern = "1580", full.names = T)
+df_ambav <- fread(file1)
+```
+# Abmav umrechnen un Matrixpotential
+```{r}
+#library(stringr)
+df_ambav <- df_ambav %>%
+    # pF-Wert berechnen aus nFK
+    mutate(across(starts_with("nFK"), 
+                  ~scales::rescale(., from = c(0,100), to = c(4.2, 1.8)), 
+                  .names = #"{str_replace(.col, 'nFK', 'pF')}")
+                      '{gsub(x=.col, pattern = "nFK", replacement = "pF")}')
+    ) %>%
+    #Matrixpotential berechnen aus pF
+        mutate(across(starts_with("pF"), 
+                  ~scales::rescale(., from = c(1.8, 4.2), to = c(-10^1.8, -10^4.2)), 
+                  .names = '{gsub(x=.col, pattern = "pF", replacement = "matrix_pot")}')
+)
+```
+```{r}
+# pf_min <- 1.8
+# pf_max <- 4.2
+# hPa_min <- 10^pf_min
+# hPa_max <- 10^pf_max
+```
+
+
+```{r}
+nn <- names(df_ambav)[grepl(x = names(df_ambav),pattern = "matrix_pot")]
+df_ambav <- df_ambav %>% 
+    mutate(r1 = !!sym(nn[1])-!!sym(nn[2]),
+           r2 = !!sym(nn[2])-!!sym(nn[3]),
+           r3 = !!sym(nn[3])-!!sym(nn[4]),
+           r4 = !!sym(nn[4])-!!sym(nn[5]),
+           r5 = !!sym(nn[5])-!!sym(nn[6]))
+```
+
+```{r}
+map(paste0("r", 1:5),
+    ~ggplot(df_ambav[1000:2000,], aes(x=1:1001)) + 
+        geom_line(aes(y=!!sym(.))) +
+        theme_bw() + 
+        theme(panel.grid = element_blank())
+)
+```
+
+Die Beschreibung des Wassertransfers im Boden mittels der Richards-Gleichung bezieht die Boden-Kardinalwerte 0sat, 0FK, 0WP und 0res (Sättigungswassergehalt, Feldkapazität, Welkepunkt und Restwassergehalt) aus Lookup-Tabellen, welche für jede Bodenschicht die in der Bodenkundlichen Kartieranleitung (KA5) der Bundesanstalt für Geowissenschaften und Rohstoffe (BGR) tabellierten Kardinalwerte für verschiedene Bodentypen (definiert durch Ton- und Schluff gehalt), Dichten und Humusgehalte wiedergeben. Die ungesättigte hydraulische Leitfähigkeit wird nach VEREECKEN et al. (1990) berechnet.
+
+#Parameter für 20cm Schicht (überschlagen für alle Schichten)
+```{r}
+Osat =  90 #Sättigungswassergehalt (mm)
+OFK = 30 #Feldkapazität (mm)
+OWP = 10 #Welkepunkt (mm)
+Ores = 10 #Restwassergehalt (mm)
+```
+
+```{r}
+df %>% ungroup %>% 
+    filter(satz_id %in% c(3) & variante_acronym =="N100Wfull" & wiederholung =="a") %>%
+    select(datum_wetter, das, FAO56_mm, kc_aus_ibi, ETxKc = ET, niederschlag_mm, bewaesserung_mm, wasser_input_mm) %>%
+    
+```
+#ungesättigkte hydraulische Leitfähigkeit (in Abhängigkeit vom Matrixpotential)
+h = Matrixpotential/Druckhöhe (m)
+```{r}
+#Ks #gesättigte hydraulische Leitfähigkeit (m d-1)
+Sand = 50 #%
+Ton = 20 #%
+kf = 60.96 * 10^(-0.6 + 0.0126 * Sand - 0.0064 * Ton)
+kf
+```
+
+```{r}
+#K(h) = 
+r = 0.05 #Restwassergehalt (m³m-³)
+s = 0.45 #Sättigungswassergehalt (m³m-³)
+O = 0.12 #Wassergehalt (m³m-³).  ###Test
+alpha = #van Genuchten Parameter  für Lufteintrittspunkt (m-1)
+n = #van Genuchten Parameter für Porengrößenverteilung (-)
+Ks = #gesättigte hydraulische Leitfähigkeit (md- 1)
+l = #Porenkonnektivitätsparameter (-)
+#Se = effektiver Wassergehalt (m³m-³) 
+```
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+#echte nfk-werte:ratio bilden
+
+```{r}
+df_t <- tensio %>% 
+    filter(satz_id == 3, variante_H2O=="Wfull", wiederholung=="a") %>%
+    select(satz_id, zeit_messung, ends_with("nFK")) %>%
+    mutate(across(ends_with("nFK"), ~100-., .names = "{.col}_mm")) %>%
+    #group_by(satz_id) %>%
+    #mutate(across(ends_with("mm"), ~c(NA, diff(.)), .names = "diff_{.col}")) %>%
+    mutate(r1 = T2040_nFK_mm-T0020_nFK_mm,
+           r2 = T0020_nFK_mm-T4060_nFK_mm) #%>%
+#filter(if_all(c(r1,r2), ~between(., -25,25)))
+
+ggplot(df_t, aes(x=1:nrow(df_t))) + 
+    geom_point(aes(y=r1, col="ratio1")) +
+    geom_point(aes(y=r2, col="ratio2")) + 
+    geom_line(aes(y=1)) +  geom_line(aes(y=0), linetype = 2) +
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+
+df_t$r1 %>% quantile(na.rm = T)
+df_t$r2 %>% quantile(na.rm = T)
+```
+
+
+```{r}
+
+
+df_t %>% left_join(df_teile %>% filter(variante_acronym =="N100Wfull" & wiederholung =="a"), by = c("satz_id", "zeit_messung" = "datum_wetter") ) %>%
+    #ggplot(aes(T0020_nFK,nFK_prozent_0020)) + 
+    #ggplot(aes(T2040_nFK,nFK_prozent_2040)) + 
+    ggplot(aes(T4060_nFK,nFK_prozent_4060)) + 
+    geom_point()
+```
+
+
+leichte Böden: Permanenter Welkepunkt 18 mm, FK 102 mm
+=> nFK: 84 mm
+ schwere Böden: Permanenter Welkepunkt 78 mm, FK 222 mm
+=> nFK 144 mm 
+
+
+
+#Test: nFK anfügen:
+
+<!-- ```{r} -->
+<!-- tensio <- fread("../data/derived_data/nfK_2020_2022_20220805.csv") %>% -->
+<!--     mutate_at("zeit_messung", ~as_date(.)) -->
+
+<!-- df <- df %>% left_join(tensio, by = c("satz_id", "variante_H2O", "wiederholung", -->
+<!--                                       "datum_wetter" =  "zeit_messung")) -->
+<!-- ``` -->
+
+<!-- #Variability der nFK zwischen Wiederholungen plotten: -->
+<!-- ```{r} -->
+<!-- df_mean <- df %>% select(satz_id, das,"T0020_nFK", "T2040_nFK", "T4060_nFK") %>% -->
+<!--     drop_na() %>% -->
+<!--     pivot_longer(cols = T0020_nFK:T4060_nFK, names_to = "Tiefe", values_to = "nFK_prozent") %>% -->
+<!--     group_by(satz_id, das, Tiefe) %>% -->
+<!--     summarise(across(c("nFK_prozent"), -->
+<!--                      .fns = list(mean=mean, sd=sd, max=max, min=min)), -->
+<!--               .groups = "drop") -->
+
+<!-- plot_nfk <- ggplot(df_mean, aes(x=das))+ -->
+<!--     geom_ribbon(aes(ymin =nFK_prozent_min, -->
+<!--                     ymax = nFK_prozent_max,  fill = "minmax")) + -->
+<!--     geom_ribbon(aes(ymin =nFK_prozent_mean-nFK_prozent_sd, -->
+<!--                     ymax = nFK_prozent_mean+nFK_prozent_sd, fill = "sd")) + -->
+<!--     geom_line(aes(y=nFK_prozent_mean)) + -->
+<!--     scale_y_continuous(limits = c(40,125)) + -->
+<!--     facet_wrap(.~satz_id) + -->
+<!--     theme_bw()+ -->
+<!--     theme(panel.grid = element_blank()) -->
+
+<!-- plot_nfk %+% (data = df_mean %>% filter(Tiefe == "T0020_nFK")) -->
+<!-- plot_nfk %+% (data = df_mean %>% filter(Tiefe == "T2040_nFK")) -->
+<!-- plot_nfk %+% (data = df_mean %>% filter(Tiefe == "T4060_nFK")) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- df %>% group_by(satz_id, tage_seit_aussaat = das) %>% -->
+<!--     summarise(across(c(T0020_nFK, T2040_nFK, T4060_nFK), ~mean(., na.rm = TRUE))) %>% -->
+<!--     drop_na() -->
+<!-- ``` -->
+
