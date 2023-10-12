@@ -41,8 +41,8 @@ fwrite(x = wetter, file = "../data/derived_data/wetter_2020_2022_20220805.csv", 
 
 #Tensio einlesen:
 ```{r}
-#tensio <- fread("../data/derived_data/nfK_2020_2022_20220805_10cm_Schritte.csv") %>%
-#    mutate_at("zeit_messung", ~as_date(.))
+# tensio <- fread("../data/derived_data/nfK_2020_2022_20220805_10cm_Schritte.csv") %>%
+#     mutate_at("zeit_messung", ~as_date(.))
 tensio <- fread("../data/derived_data/nfK_2020_2022_20220805.csv") %>%
     mutate_at("zeit_messung", ~as_date(.))
 ```
@@ -191,13 +191,13 @@ input_tabelle <- input_tabelle %>%
 ### nFK vom Vortag als Input ausweisen:
 ```{r}
 input_tabelle <- 
-     input_tabelle  %>%
-    # mutate(across(c("nFK_0010","nFK_1020","nFK_2030","nFK_3040","nFK_4050","nFK_5060"), 
-    #               ~c(NA,.[1:(n()-1)]) , 
+    input_tabelle  %>%
+    # mutate(across(c("nFK_0010","nFK_1020","nFK_2030","nFK_3040","nFK_4050","nFK_5060"),
+    #               ~c(NA,.[1:(n()-1)]) ,
     #               .names = "{.col}_Vortag")
     # )
-    mutate(across(c("T0020_nFK", "T2040_nFK", "T4060_nFK"), 
-                  ~c(NA,.[1:(n()-1)]) , 
+    mutate(across(c("T0020_nFK", "T2040_nFK", "T4060_nFK"),
+                  ~c(NA,.[1:(n()-1)]) ,
                   .names = "{.col}_Vortag")
     )
 ```
@@ -211,22 +211,77 @@ input_tabelle <- input_tabelle %>%
     mutate(wasser_input_Vortag = c(NA,wasser_input[1:(n()-1)]))
 ```
 
+# neu: nur trockene Sätze auswählen:
+```{r}
+input_tabelle <- 
+    input_tabelle  %>%
+    #filter(variante_H2O == "Wfull") %>%
+    group_by(satz_id, variante_H2O, wiederholung, tage_seit_aussaat) %>%
+    select(where(is.numeric)) %>%
+    #summarise(across(everything(), ~mean(., na.rm = T))) %>% #Mittelwert der Varianten erstellen
+    #filter(satz_id %in% c(3,5,8)) %>% #relativ trockene Sätze
+    ungroup()
+```
+
+
 #Benötigte Variablen selektieren.
 ```{r}
 input_tabelle <- 
     input_tabelle  %>%
-    select(-niederschlag_mm, -bewaesserung_mm, -wasser_input,-wiederholung, -satz_id, 
-           -variante_H2O, -zeit_messung, -wetter_id, -FAO56_mm, -FAO56_mm_sum, -par_Wh_m2) %>%
+    select(-niederschlag_mm, -bewaesserung_mm, -wasser_input,
+           #-satz_id, 
+           -wetter_id, -FAO56_mm, -FAO56_mm_sum, -par_Wh_m2#,
+           #-wiederholung, -variante_H2O, -zeit_messung
+    ) %>%
     #par_Wh_m2 raus, da bei vielen Stationen nicht enthalten
-    select(contains("nFK"), !contains("nFK")) %>%
+    select(satz_id, wiederholung, variante_H2O, contains("nFK"), !contains("nFK")) %>%
     tidyr::drop_na()
 ```
+
+
+#gleiche Intervalle für LSTM-Anni
+```{r}
+i1 <- input_tabelle %>% 
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    mutate(nn = n()) %>% filter(nn >= 14) 
+
+i14 <- i1 %>% filter(nn == 14)
+i14plus <- i1 %>% filter(between(nn,15, 30))
+i30plus <- i1 %>% filter(nn > 30)
+
+idx1 <- 1:14
+idx2 <- max(idx1)-1
+idx3 <- 10:23
+
+i14_sliced <- i14 %>%
+    mutate(nx = 1:n(), .after = "variante_H2O")
+
+i14plus_sliced <- i14plus %>% slice(idx1,(n()-idx2):n()) %>%
+    mutate(nx = 1:n(), .after = "variante_H2O")
+
+i30plus_sliced <- i30plus %>% slice(idx1,(n()-idx2):n(), idx3) %>%
+    mutate(nx = 1:n(), .after = "variante_H2O")
+
+df_same_lengths <- bind_rows(i14_sliced, i14plus_sliced, i30plus_sliced) %>%
+    group_by(satz_id, variante_H2O, wiederholung) %>% 
+    mutate(sub1  = case_when(nx<=14 ~ 1,
+                             between(nx,15,28) ~ 2,
+                             nx > 28 ~ 3,
+                             T ~ 999)) %>% 
+    # group_by(satz_id, variante_H2O, wiederholung, sub1) %>%
+    # summarise(nn2 = n()) %>%
+    ungroup()
+
+
+input_tabelle <- df_same_lengths %>% 
+    select(-satz_id, -wiederholung, -variante_H2O, -nx, -nn, -sub1,
+           -starts_with(c("bodensaugspannung_","pf_")))
+```
+
 
 ### Tabelle speichern on Projekt-Ordner für Daten
 ```{r}
 # write.table(x = input_tabelle,
-#             file = "../data/derived_data/input_tabelle_2020_2022_20230524_25cm_complete.csv",
+#             file = "../data/derived_data/input_tabelle_2020_2022_20230905_20cm_LSTM_complete.csv",
 #             sep = ";",dec = ".", row.names = FALSE)
 ```
-
-
