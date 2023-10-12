@@ -6,11 +6,13 @@ params:
   schlag: "Mittelgewann"
   lat: 49.6025744
   lon: 8.3598389
-  datum_aussaat: "2023-03-01"
+  datum_aussaat: "2023-08-23"
   Ton_prozent: 15
-  Schluff_prozent: 25s
+  Schluff_prozent: 25
   Sand_prozent: 60
   C_org_prozent: 1.2
+  start_nFK: !r c(100, 100, 100, 100, 100, 100)
+  bewaesserungs_csv: ../../data/derived_data/Wetterdaten_Praxis/Mittelgewann/bewaesserung.csv
 ---
 
 ```{r}
@@ -51,7 +53,7 @@ library(stringr)
 #Historie der Wetterdaten von DWD laden: Vier einzelen Dateien für Klima, Solar, Wind, und Luftfeuchtigkeit
 ```{r}
 rmarkdown::render(input = "Wetterdaten_Praxisschlag_beziehen.Rmd",
-                  params = list(schlag = params$schlag, lat = params$lat, lon = params$lon))
+                  params = list(schlag = params$schlag, lat = params$lat, lon = params$lon, datum_aussaat = params$datum_aussaat))
 ```
 
 # Wetter-Prognose von openweathermap.org laden
@@ -83,7 +85,7 @@ df <- klima %>%
     left_join(luftfeuchte, by = "datum") %>%
     left_join(wind, by = "datum")
 
-rm(klima, solar,luftfeuchte,wind)
+#rm(klima, solar,luftfeuchte,wind)
 ```
 ## Zeitraum filter: ab Aussaat
 ```{r}
@@ -121,14 +123,17 @@ df_zusammen <- df_zusammen %>%
 ```{r}
 df_zusammen<- df_zusammen %>% 
     mutate(
-        nFK_0010_Vortag = NA,
-        nFK_1020_Vortag = NA,
-        nFK_2030_Vortag = NA,
-        nFK_3040_Vortag = NA,
-        nFK_4050_Vortag = NA,
-        nFK_5060_Vortag = NA,
-        wasser_input_Vortag = c(0, wasser_input_mm[-n()])) %>%
-    mutate(across(starts_with("nFK"), ~ifelse(tage_seit_aussaat == 1, 100, NA)))
+        nFK_0010_Vortag = c(params$start_nFK[1], rep(NA, times = n()-1)),
+        nFK_1020_Vortag = c(params$start_nFK[2], rep(NA, times = n()-1)),
+        nFK_2030_Vortag = c(params$start_nFK[3], rep(NA, times = n()-1)),
+        nFK_3040_Vortag = c(params$start_nFK[4], rep(NA, times = n()-1)),
+        nFK_4050_Vortag = c(params$start_nFK[5], rep(NA, times = n()-1)),
+        nFK_5060_Vortag = c(params$start_nFK[6], rep(NA, times = n()-1)),
+        wasser_input_Vortag = c(0, wasser_input_mm[-n()])) #%>%
+    # mutate(across(starts_with("nFK"), ~ifelse(tage_seit_aussaat == 1, 100, NA)))
+        
+# df_zusammen[1, c("nFK_0010_Vortag","nFK_1020_Vortag","nFK_2030_Vortag",
+                 # "nFK_3040_Vortag","nFK_4050_Vortag","nFK_5060_Vortag")] <- params$start_nFK
 ```
 
 
@@ -239,6 +244,13 @@ df_zusammen <- df_zusammen %>%
 names1 <- names(data0)[-c(1:6)]
 data_praxis <- df_zusammen %>% select(all_of(names1))
 ```
+
+#Leer-Werte füllen, falls nicht in Messungen enthalten
+```{r}
+data_praxis <- data_praxis %>% mutate(across(!ends_with("_Vortag"), 
+                                             ~ifelse(is.na(.), round(mean(., na.rm = TRUE),2), .)))
+```
+
 
 ```{r}
 fwrite(data_praxis, paste0(path_derived_data, "/daten_komplett.csv"))
