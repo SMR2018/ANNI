@@ -13,11 +13,19 @@ params:
   betrieb: Haas
   feld: Kämmerwiese
   satz: 1
-  filepath_tf: ../../data/derived_data/Model2/ANNI_Tensorflow_20230420
-  scaling_data_path: ../../data/derived_data/Model2/scaling_data.csv
-  wetter_anbau_daten_csv: ../../data/derived_data/Wetterdaten_Praxis/Kämmerwiese/daten_komplett.csv
-  datum_aussaat: "2023-04-27"
+  # filepath_tf: ../../data/derived_data/Model2/ANNI_Tensorflow_20230420
+  # scaling_data_path: ../../data/derived_data/Model2/scaling_data.csv
+  filepath_tf1: ../../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0010cm_20230824
+  filepath_tf2: ../../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht2030cm_20230824
+  filepath_tf3: ../../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht5060cm_20230824
+  scaling_data_path: ../../data/derived_data/scaling_data_alle_Daten_DWD_20230824.csv
+  wetter_anbau_daten_csv: ../../data/derived_data/Wetterdaten_Praxis/Mittelgewann/daten_komplett.csv
+  bewaesserungs_csv: ../../data/derived_data/Wetterdaten_Praxis/Mittelgewann/bewaesserung.csv
+  datum_aussaat: "2023-08-23"
+  start_nFK: !r c(100, 100, 100, 100, 100, 100)
+  #start_nFK: !r c(87.7, 87.0, 62.1, 35.8, 25.3, 33.9)
 ---
+
 
 ```{r, include=FALSE}
 knitr::opts_chunk$set(cache = FALSE, echo = FALSE, fig.pos = "H", out.extra = "", 
@@ -39,6 +47,7 @@ library(ggnewscale)
 library(data.table)
 library(cowplot)
 library(lubridate)
+library(tidyr)
 ```
 
 Aussaat-Datum: `r format.Date(as_date(params$datum_aussaat), "%d.%m.%Y")`
@@ -48,9 +57,16 @@ Aussaat-Datum: `r format.Date(as_date(params$datum_aussaat), "%d.%m.%Y")`
 <!-- 1\. Gespiechertes Modell laden -->
 
 ```{r, eval=TRUE}
-filepath_tf <- params$filepath_tf
-#"../../data/derived_data/Model2/ANNI_Tensorflow_20230420"
-new_model <- load_model_tf(filepath_tf)
+# filepath_tf <- params$filepath_tf
+# new_model <- load_model_tf(filepath_tf)
+
+filepath_tf1 <- params$filepath_tf1
+filepath_tf2 <- params$filepath_tf2
+filepath_tf3 <- params$filepath_tf3
+
+new_model1 <- load_model_tf(filepath_tf1)
+new_model2 <- load_model_tf(filepath_tf2)
+new_model3 <- load_model_tf(filepath_tf3)
 ```
 
 <!-- 2\. Skalierungs-Werte für Input-Daten laden -->
@@ -64,30 +80,133 @@ scaling_data <- data.table::fread(params$scaling_data_path)
 ```{r}
 satz_raw <- data.table::fread(params$wetter_anbau_daten_csv)
 
+satz_raw <- satz_raw %>%
+    mutate(niederschlag_mm_sum = c(0,diff(niederschlag_mm_sum))) 
+
+#Skalierung: nur notwendige Daten filtern:
+names1 <- names(satz_raw)
+scaling_data <- scaling_data[match(names1,scaling_data$parameter),]
+#bei original-ANNI: scaling_data nicht ändern!
+
+
+
+#Anbau-Daten skalieren:
 satz_scaled <- scale(satz_raw, center = scaling_data$m, scale = scaling_data$s)
+
+#Anwender-Schätzung der nFK anfügen:
+nfk_anwender <- fread(paste0(dirname(params$wetter_anbau_daten_csv), "/nFK_schaetzung_anwender.csv"))
+nfk_anwender_scaled <- scale(nfk_anwender[,-1], center = scaling_data$m[1:6], scale = scaling_data$s[1:6])
 ```
 
-<!-- 4\. ANNI für jeden Tag einzeln hintereinander im Loop ausführen -->
+<!-- ## Genutzte Parameter der 3 Modelle -->
 
 ```{r}
-predictions_anni <- matrix(ncol = 6, nrow = nrow(satz_scaled))
+#nFK_0010
+used1 <- c("Tmean_gradC", "Tmin_gradC", "Tmax_gradC", "relLuftfeuchte_mean_prozent", "relLuftfeuchte_min_prozent", "globalstrahlung_Wh_m2", "windgeschwindigkeit_m_s", "niederschlag_mm_sum", "wasser_input_Vortag", "nFK_0010_Vortag", "nFK_2030_Vortag", "tage_seit_aussaat", "Tmean_th9_25_gradC", "ibi", "irmi")
+
+#"nFK_2030"
+used2 <- c("Tmean_gradC", "Tmin_gradC", "Tmax_gradC", "relLuftfeuchte_mean_prozent", "globalstrahlung_Wh_m2", "niederschlag_mm_sum", "wasser_input_Vortag", "nFK_0010_Vortag", "nFK_2030_Vortag", "nFK_5060_Vortag", "tage_seit_aussaat", "Tmean_th9_25_gradC", "ibi", "irmi", "Tmean_gradC_sum", "Tmean_th9_25_gradC_sum", "globalstrahlung_Wh_m2_sum", "tageslicht_h_sum", "tageslicht_h_th9_sum")
+
+#"nFK_5060"
+used3 <- c("Tmean_gradC", "globalstrahlung_Wh_m2", "niederschlag_mm_sum", "wasser_input_Vortag", "nFK_0010_Vortag", "nFK_2030_Vortag", "nFK_5060_Vortag", "tage_seit_aussaat", "ibi", "irmi", "Tmean_gradC_sum", "tageslicht_h_sum", "tageslicht_h_th9_sum")
+```
+
+
+<!-- 4\. ANNI für jeden Tag einzeln hintereinander im Loop ausführen -->
+```{r}
+# Original_ Ein Modell mit 6 Ausgabewerten (nFK in 6 Schichten)
+# predictions_anni <- matrix(ncol = 6, nrow = nrow(satz_scaled))
+# 
+# for (i in 1:(nrow(satz_scaled)-1)){
+# 
+#     predictions_anni[i,] <- new_model %>%
+#         predict(x = matrix(nrow = 1, satz_scaled[i,]), verbose = 0)
+#     satz_scaled[i+1,1:6] <- scale(matrix(predictions_anni[i,], nrow = 1),
+#                                   center = scaling_data$m[1:6],
+#                                   scale = scaling_data$s[1:6])
+#     k_clear_session()
+# 
+# anwender_nfk_i <- unlist(nfk_anwender_scaled[i+1,])
+#     anwender_nfk_i_raw <- unlist(nfk_anwender[i+1,-1])
+#     if(all(!is.na(anwender_nfk_i))) {
+#         satz_scaled[i+1,1:6] <- anwender_nfk_i[1:6];
+#         predictions_anni[i,1:6] <- anwender_nfk_i_raw[1:6];
+#     }
+# 
+# 
+# }
+
+```
+
+<!-- # 3 Einzel-Modelle für 3 Bodenschichten laufen lassen: -->
+```{r}
+predictions_anni1 <- matrix(ncol = 1, nrow = nrow(satz_scaled)-1)
+predictions_anni2 <- matrix(ncol = 1, nrow = nrow(satz_scaled)-1)
+predictions_anni3 <- matrix(ncol = 1, nrow = nrow(satz_scaled)-1)
 
 for (i in 1:(nrow(satz_scaled)-1)){
     
-    predictions_anni[i,] <- new_model %>%
-        predict(x = matrix(nrow = 1, satz_scaled[i,]), verbose = 0)
-    satz_scaled[i+1,1:6] <- scale(matrix(predictions_anni[i,], nrow = 1),
-                                  center = scaling_data$m[1:6],
-                                  scale = scaling_data$s[1:6])
+    #nFK_0010_Vortag
+    predictions_anni1[i,] <- new_model1 %>%
+        predict(x = matrix(nrow = 1, satz_scaled[i,used1]), verbose = 0)
+    satz_scaled[i+1,1] <- scale(matrix(predictions_anni1[i,], nrow = 1), 
+                                center = scaling_data$m[1], 
+                                scale = scaling_data$s[1]) 
+    
+    #nFK_2030_Vortag
+    predictions_anni2[i,] <- new_model2 %>%
+        predict(x = matrix(nrow = 1, satz_scaled[i,used2]), verbose = 0)
+    satz_scaled[i+1,3] <- scale(matrix(predictions_anni2[i,], nrow = 1), 
+                                center = scaling_data$m[3], 
+                                scale = scaling_data$s[3]) 
+    #nFK_5060_Vortag
+    predictions_anni3[i,] <- new_model3 %>%
+        predict(x = matrix(nrow = 1, satz_scaled[i,used3]), verbose = 0)
+    satz_scaled[i+1,6] <- scale(matrix(predictions_anni3[i,], nrow = 1), 
+                                center = scaling_data$m[6], 
+                                scale = scaling_data$s[6]) 
     k_clear_session()
+    
+    #i=19
+    anwender_nfk_i <- unlist(nfk_anwender_scaled[i+1,])
+    anwender_nfk_i_raw <- unlist(nfk_anwender[i+1,-1])
+    if(all(!is.na(anwender_nfk_i))) {
+        satz_scaled[i+1,c(1,3,6)] <- anwender_nfk_i[c(1,3,6)];
+        predictions_anni1[i,] <- anwender_nfk_i_raw[1];
+        predictions_anni2[i,] <- anwender_nfk_i_raw[3];
+        predictions_anni3[i,] <- anwender_nfk_i_raw[6]
+    }
+    
 }
 
 ```
 
+
+
+<!-- #ANNI-Output zusammentragen und interpolieren: -->
+```{r}
+#bei Original-ANNI:
+#all_nFK_out <- predictions_anni %>% as_tibble %>% slice(-n())
+    
+all_nFK_out <- data.frame(
+    nFK_0010 = predictions_anni1, 
+    nFK_1020 = NA,
+    nFK_2030 = predictions_anni2, 
+    nFK_3040 = NA,
+    nFK_4050 = NA,
+    nFK_5060 = predictions_anni3) %>%
+    #interpolation:
+    t %>% as.data.frame() %>%
+    mutate(across(everything(), ~approx(., n=6)$y)) %>%
+    t %>% as.data.frame()
+```
+
+
 <!-- 5\. Ergebnisse formatieren -->
 
 ```{r}
-y2 <- predictions_anni[-NROW(predictions_anni),] %>% as.data.frame() %>%
+y2 <-all_nFK_out %>%
+    #predictions_anni[-NROW(predictions_anni),] %>% as.data.frame() %>%
     mutate(tage_seit_aussaat = satz_raw$tage_seit_aussaat[-1]) %>%
     tidyr::pivot_longer(cols = -tage_seit_aussaat,
                         values_to = "predicted_nFK",  names_to = "depth")
@@ -95,7 +214,9 @@ y2 <- predictions_anni[-NROW(predictions_anni),] %>% as.data.frame() %>%
 result <- #100% nFK für Tag 1 anfügen:
     bind_rows(data.frame(tage_seit_aussaat =  1,
                          depth = unique(y2$depth),
-                         predicted_nFK = 100),
+                         #predicted_nFK = 100), ## Startwerte anpassen!
+                         predicted_nFK = params$start_nFK), ## Startwerte anpassen!
+              
               y2) %>%
     mutate_at("depth",
               ~factor(., labels = c("nFK_0010", "nFK_1020", "nFK_2030",
@@ -116,11 +237,23 @@ ann_durchwurzelte_schicht <- result %>%
 
 <!-- ## Bewässerungs-Termin berechnen und als als Text ausgeben -->
 ```{r}
-zeitpunkt_bewaessern_in_prognose <- tail(ann_durchwurzelte_schicht) %>% 
-    filter(nFK_anni < 70) %>% slice(1) %>% pull(tage_seit_aussaat)
+zeitpunkt_bewaessern_in_prognose <- tail(ann_durchwurzelte_schicht, n = 5) %>% 
+    filter(nFK_anni < 60) %>% slice(1) %>% pull(tage_seit_aussaat)
+
+#Falls die Bewässerung in der Vergangenheit:  auf heute verschieben
+if(length(zeitpunkt_bewaessern_in_prognose) != 0){
+    datum_bewaessern <- as_date(params$datum_aussaat) + zeitpunkt_bewaessern_in_prognose
+    morgen <- as.numeric(Sys.Date() - as_date(params$datum_aussaat) + 0)
+    if(datum_bewaessern <= Sys.Date()) {zeitpunkt_bewaessern_in_prognose <- morgen}
+}
+
+#Fallse es genug regnet in der Prognose: dann Bewässerung rückstellen:
+niederschlag_prognose <- tail(satz_raw$niederschlag_mm_sum, n = 4) 
+regen_statt_bewaessern <- sum(niederschlag_prognose) > 25 | any(niederschlag_prognose >= 15)
+
+if(regen_statt_bewaessern) {zeitpunkt_bewaessern_in_prognose <- zeitpunkt_bewaessern_in_prognose[-1]}
 
 date1 <- lubridate::as_date(params$datum_aussaat)
-
 wochentag <- c("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
 termin <- date1+zeitpunkt_bewaessern_in_prognose
 wochentag_termin <- wochentag[as.numeric(format.Date(termin, "%u"))]
@@ -161,12 +294,35 @@ pretty2 <- c(as.character(format.Date(pretty1, "%d.%m")), rep(" ", times = lengt
 v_label <- paste("heute:", format.Date(Sys.Date(), ("%d.%m.%y")))
 ```
 
+
+<!-- #Bewässerung hinzufügen: -->
+```{r}
+bewaesserung_df <- fread(params$bewaesserungs_csv)
+bewaesserung_df <- bewaesserung_df %>% 
+    mutate(across(datum_bewaesserung, ~as_date(., format = "%d.%m.%y"))) %>%
+     #mutate(across(datum_bewaesserung,~.+1)) %>%
+    select(datum_bewaesserung, bewaesserungs_menge_mm) %>% drop_na()
+
+wasser_df <- 
+    satz_raw %>%
+    select(tage_seit_aussaat, wasser_input_Vortag) %>% 
+    mutate(datum = as_date(params$datum_aussaat) + tage_seit_aussaat -2) %>%
+    left_join(bewaesserung_df, by = c("datum" = "datum_bewaesserung")) %>%
+    mutate(across(bewaesserungs_menge_mm, ~ifelse(is.na(.),0,.))) %>%
+    mutate(across(wasser_input_Vortag, ~.-bewaesserungs_menge_mm)) %>%
+    mutate(across(wasser_input_Vortag, ~ifelse(.<0,0,.))) %>% 
+    select(-datum) %>%
+    pivot_longer(cols = -tage_seit_aussaat)
+```
+
 ```{r, warning=F}
 #Regen plotten:
 korrekturfaktor <- 1.0
 p2 <- ggplot(satz_raw, aes(x = tage_seit_aussaat)) +
-    geom_col(aes(x = tage_seit_aussaat-2, y = wasser_input_Vortag,
-                 fill = "Niederschlag")) +
+    # geom_col(aes(x = tage_seit_aussaat-2, y = wasser_input_Vortag,
+    #              fill = "Niederschlag")) +
+    geom_col(data = wasser_df, aes(x = tage_seit_aussaat-2, y = value,
+                                   fill = name)) +
     geom_line(aes(x = tage_seit_aussaat-1, y = Tmax_gradC /korrekturfaktor, col = "Temperatur")) + 
     theme_bw() +
     theme(panel.grid = element_blank(),
@@ -186,7 +342,12 @@ p2 <- ggplot(satz_raw, aes(x = tage_seit_aussaat)) +
                                            labels = pretty2)) +
     
     
-    scale_fill_manual("Wetterdaten", values = c("Niederschlag" = "grey40")) +
+    #scale_fill_manual("Wetterdaten", values = c("Niederschlag" = "grey40")) +
+    scale_fill_manual("Wetterdaten", 
+                      values = c("wasser_input_Vortag" = "grey40",
+                                 "bewaesserungs_menge_mm" = "grey70"), 
+                      labels = c("wasser_input_Vortag"="Niederschlag",
+                                 "bewaesserungs_menge_mm" = "Bewässerung")) +
     scale_color_manual("", values = c("Temperatur" = "grey20"), 
                        labels = c("Temperatur" = "Tageshöchstemperatur")) +
     guides(fill = guide_legend(order = 1), color = guide_legend(order = 2)) + 
@@ -229,9 +390,21 @@ p1 <- ggplot(result) +
     
     new_scale_colour() + 
     geom_point(aes(x=zeitpunkt_bewaessern_in_prognose, y= 5, col = "bewässern"), shape = 8, size = 6) + 
+    scale_color_manual("",values = c("bewässern" = "deepskyblue2",
+                                     "Schätzung Praxis" = "black")) + 
     
-    scale_color_manual("",values = c("bewässern" = "deepskyblue2" ) )+    
-    ylab("nFK (%)") + xlab("Tage seit Aussaat") +
+    #new_scale_colour() +
+    
+    # if(!is.na(any(nfk_anwender$nFK_0010))){
+    # geom_point(data = nfk_anwender, aes(tage_seit_aussaat, as.factor(nFK_0010), 
+    #                                     col = "Schätzung Praxis"), 
+    #            size = 5, shape = 8) +  #Punkt Anwender-Schätzung
+    #  scale_color_manual("",values = c("bewässern" = "deepskyblue2",
+    #                                   "Schätzung Praxis" = "black") )}
+    
+    #scale_color_manual("", values = c("Schätzung Praxis" = "black")) + 
+
+ylab("nFK (%)") + xlab("Tage seit Aussaat") +
     theme_bw() +
     theme(panel.grid = element_blank(), legend.position = "right") +
     scale_y_continuous(expand = expansion(add = c(0,10)),
@@ -244,15 +417,27 @@ p1 <- ggplot(result) +
     geom_vline(xintercept = v_heute, col = "blue") + 
     geom_text(aes(x = v_heute, y = 5, label = v_label),
               col = "blue", vjust=-0.5,hjust = 0,
-              angle=90,size=10/.pt)
+              angle=90,size=10/.pt) 
 #p1
+
+#Punkt Anwender-Schätzung
+add_schaetz_punkte <- if(!is.na(any(nfk_anwender$nFK_0010))) {
+    list(geom_point(data = nfk_anwender, 
+                    aes(tage_seit_aussaat, nFK_0010, 
+                        col = "Schätzung Praxis"), size = 5, shape = 8)
+    )
+} else {
+    geom_blank()
+}
+
+p_mit_punkt <- p1 + add_schaetz_punkte
 ```
 
 
 ```{r, fig.width=7*1.2, fig.height=5*1.2, warning=FALSE, fig.cap=cap}
 #Beide Plots zusannefügen:
-p3 <- plot_grid(p2, p1, labels = c('A', 'B'), label_size = 12, ncol = 1,
-                align = "hv", rel_heights = c(1,2), axis="t")
+p3 <- plot_grid(p2, p_mit_punkt, labels = c('A', 'B'), label_size = 12, ncol = 1,
+                align = "hv", rel_heights = c(1,2.5), axis="t")
 p3
 ```
 
