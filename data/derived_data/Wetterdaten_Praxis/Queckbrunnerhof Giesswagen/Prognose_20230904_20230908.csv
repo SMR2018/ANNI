@@ -1,0 +1,6 @@
+datum,tag_prognose,Tmean_gradC,Tmin_gradC,Tmax_gradC,relLuftfeuchte_mean_prozent,relLuftfeuchte_min_prozent,relLuftfeuchte_max_prozent,windgeschwindigkeit_m_s,wasser_input_mm
+2023-09-04,1,22.364,20.19,27.9,54.6,45,65,3.97,0
+2023-09-05,2,21.75375,17.03,27.98,53.75,35,69,3.11875,0
+2023-09-06,3,21.77375,16.4,28.78,52.625,32,69,2.56375,0
+2023-09-07,4,22.6075,17.36,29.41,53.5,32,72,2.44625,0
+2023-09-08,5,23.2025,18.1,29.97,54.5,35,70,1.22125,0
