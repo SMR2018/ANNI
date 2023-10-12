@@ -4,43 +4,141 @@ author: "Samantha Rubo"
 date: "2023-05-15"
 ---
 
+# Pakete laden:
+```{r, eval=FALSE, message=FALSE}
+library(dplyr)
+library(lubridate)
+```
+
+# 1. Jeden Tag: zunächst Regen-Karte (eine für alle Schläge) laden
+```{r, message=FALSE}
+library(rdwd)
+link <- "daily/hyras_de/precipitation/pr_hyras_1_2023_v5-0_de.nc"
+path0 <- "../../data/raw_data/Wetterdaten_Praxis"
+path_karte <- paste0(path0,"/Hyras_Niederschlag_Karte")
+file.remove(list.files(path_karte, full.names = T))
+
+#Download: #90 MB!
+file <- dataDWD(link,dir = path_karte, base=gridbase, joinbf=TRUE, read=FALSE) 
+```
+
+# 2. Jeden Tag: Radolan-Daten 
+für "gestern", da diese erst ca. 13 Uhr in Hyras bereitgestellt werden
+```{r}
+gestern <- Sys.Date() -1
+gestern_numeric <- format.Date(gestern, "%m%d")
+
+# Radolan-Daten vom Server laden
+path_radolan <- paste0(path0, "/Radolan")
+file_names <- paste0("hourly/radolan/recent/asc/RW-2023",gestern_numeric)
+link <- paste0(file_names, ".tar.gz") # 3 mB
+file <- dataDWD(link,dir = path_radolan, base=gridbase, joinbf=TRUE, read=FALSE)
+
+### Unzippen
+path_unzip <- paste0(path_radolan, "/Niederschlag_2023",gestern_numeric)
+untar(tarfile = file, exdir = path_unzip, verbose = F)
+```
+
+
+<!-- # Bodenfeuchte-Startwerte grob ermitteln aus Bodenfeuchte-Viewer (beiSaisonstart): -->
+<!-- ```{r, eval=FALSE} -->
+<!-- # path1 <- "../../../WMS_WFS_Bodenfeuchte/data/derived_data/CDC_WFS_Bodenfeuchte/X_8.347_Y_49.402/BF_Start_20230101_Ende_20230823.csv" -->
+<!-- path1 <- "../../../WMS_WFS_Bodenfeuchte/data/derived_data/CDC_WFS_Bodenfeuchte/X_8.395_Y_49.624/BF_Start_20230101_Ende_20230823.csv" -->
+<!-- df <- data.table::fread(path1) -->
+
+<!-- start_datum <- as_date("2023-08-19") #as_date("2023-08-23") #as_date("2023-07-01") -->
+
+<!-- nFK_6Schichten <- df %>% select(datum = RESULT_TIME, elevation_cm, nFK_percent) %>% -->
+<!--     filter(datum == start_datum) %>% filter(elevation_cm %in% seq(10,60,10)) %>% -->
+<!--     pull(nFK_percent) -->
+<!-- nFK_6Schichten -->
+<!-- ``` -->
+
+<!-- #Start der Bodenfeuchte ab Satz2 aus ANNI von obigen Daten -->
+<!-- ```{r} -->
+<!-- path1 <- "../../data/derived_data/ANNI_Praxis/Queckbrunnerhof_Giesswagen_Satz_1_DAS1_60.csv" -->
+<!-- df <- data.table::fread(path1) -->
+
+<!-- df %>% filter(tage_seit_aussaat == as.numeric(Sys.Date() - start_datum)) %>% pull(predicted_nFK) -->
+<!-- ``` -->
+
 
 
 ```{r, eval=FALSE}
-params <- list(schlag= "Mittelgewann",
-                 lat= 49.6025744,
-                 lon= 8.3598389,
-                 datum_aussaat= "2023-03-01",
-                 Ton_prozent= 15,
-                 Schluff_prozent= 25,
-                 Sand_prozent= 60,
-                 C_org_prozent= 1.2)
+params1 <- list(schlag= "Mittelgewann",
+                lat= 49.6025744,
+                lon= 8.3598389,
+                datum_aussaat= "2023-08-23", #Sorte: Timor
+                Ton_prozent= 15,
+                Schluff_prozent= 23,
+                Sand_prozent= 62,
+                C_org_prozent= 1.2,
+                start_nFK = c(87.7, 87.0, 62.1, 35.8, 25.3, 33.9),
+                bewaesserungs_csv = "../../data/derived_data/Wetterdaten_Praxis/Mittelgewann/bewaesserung.csv")
 ```
 
 ```{r, eval=FALSE}
 params1 <- list(schlag= "Stichelpfad",
-                 lat= 49.59097,
-                 lon= 8.33063,
-                 datum_aussaat= "2023-04-18",
-                 Ton_prozent= 19.5,
-                 Schluff_prozent= 36,
-                 Sand_prozent= 44.5,
-                 C_org_prozent= 1.2)
+                lat= 49.59097,
+                lon= 8.33063,
+                datum_aussaat= "2023-04-18",
+                Ton_prozent= 19.5,
+                Schluff_prozent= 36,
+                Sand_prozent= 44.5,
+                C_org_prozent= 1.2)
 ```
 
 ```{r, eval=FALSE}
 params1 <- list(schlag= "Kämmerwiese",
-                 lat= 49.65025,
-                 lon= 8.42026,
-                 datum_aussaat= "2023-04-27",
-                 Ton_prozent= 46.5,
-                 Schluff_prozent= 35.5,
-                 Sand_prozent= 18,
-                 C_org_prozent= 1.2)
+                lat= 49.65025,
+                lon= 8.42026,
+                datum_aussaat= "2023-04-27",
+                Ton_prozent= 46.5,
+                Schluff_prozent= 35.5,
+                Sand_prozent= 18,
+                C_org_prozent= 1.2)
+```
+
+```{r, eval=FALSE}
+params1 <- list(schlag= "Rosengarten", 
+                lat=  49.62436, 
+                lon= 8.39559, 
+                datum_aussaat= "2023-08-21", #Sorte: Timor
+                Ton_prozent= 29,
+                Schluff_prozent= 56,
+                Sand_prozent= 15,
+                C_org_prozent= 1.2,
+                start_nFK = c(78.1, 79.0, 61.5, 37.8, 25.9, 34.0),
+                bewaesserungs_csv = "../../data/derived_data/Wetterdaten_Praxis/Rosengarten/bewaesserung.csv")
+```
+
+
+```{r, eval=FALSE}
+params1 <- list(schlag= "Queckbrunnerhof Giesswagen",
+                lat= 49.40148,
+                lon= 8.34814,
+                datum_aussaat= "2023-08-18", 
+                # datum_aussaat= "2023-07-01", #start_datum
+                Ton_prozent= 40,
+                Schluff_prozent= 45,
+                Sand_prozent= 15,
+                C_org_prozent= 1.2,
+                start_nFK = c(68.8, 39.4, 29.9, 23.4, 35.8, 48.4) +30, #+20
+                #start_nFK = c(98.8, 88.8, 38.84, 53.53, 68.23, 82.92),
+                #start_nFK = c(5.6,  6.3, 18.5, 34.3, 51.8, 63.8),
+                bewaesserungs_csv = "../../data/derived_data/Wetterdaten_Praxis/Queckbrunnerhof Giesswagen/bewaesserung.csv")
+```
+
+```{r, eval=FALSE}
+#pacman::p_unload(pacman::p_loaded(), character.only = TRUE)
+rstudioapi::restartSession()# Pakete entladen
 ```
 
 
 ```{r, eval=FALSE}
 rmarkdown::render(input = "Wetterdaten_zusammenstellen_default.Rmd", params = params1)
 ```
+
+
+
 
