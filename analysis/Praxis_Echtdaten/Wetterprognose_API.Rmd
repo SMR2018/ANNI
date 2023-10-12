@@ -6,10 +6,10 @@ date: "2023-05-15"
 #   schlag: "Mittelgewann"
 #   lon: 49.60
 #   lat: 8.35
-params:
-  schlag: "Geisenheim"
-  lon: 7.957512 
-  lat: 49.98318
+# params:
+#   schlag: "Geisenheim"
+#   lon: 7.957512 
+#   lat: 49.98318
 ---
 
 ```{r, message=F}
@@ -76,12 +76,18 @@ zeit_unsere_zeitzone <- zeit + sekunden_addieren
 ## Datensätze aus Liste zusammenführen und für Tage mitteln/summieren
 Rohformat ist in Zeitintervallen von 3h
 ```{r}
+
+prognose$list$rain$'3h'[is.na(prognose$list$rain$'3h')] <- 0 #NA-Werte auf 0 setzen
+prognose$list$rain$'3h'[is.null(prognose$list$rain$'3h')] <- 0 #NA-Werte auf 0 setzen
+
 prognose_pro_tag <- prognose$list$main %>%
     mutate(zeit = zeit_unsere_zeitzone, .before = "temp") %>%
     mutate(across(c("temp", "temp_min", "temp_max", "feels_like"), ~.-273.15)) %>%
     select(zeit, Tmean_gradC = temp,Tmin_gradC = temp_min,Tmax_gradC = temp_max, relLuftfeuchte_3h_prozent =  humidity ) %>%
     mutate(windgeschwindigkeit_m_s = prognose$list$wind$speed) %>%
-    mutate(niederschlag_mm = ifelse(is.null(prognose$list$rain$'3h'),0,prognose$list$rain$'3h')) %>%
+    # mutate(niederschlag_mm = ifelse(is.null(prognose$list$rain$'3h'),0,prognose$list$rain$'3h')) %>%
+    mutate(niederschlag_mm = prognose$list$rain$'3h') %>%
+    
     mutate(datum = format.Date(zeit, "%Y-%m-%d")) %>%
     group_by(datum) %>%
     summarise(Tmean_gradC = mean(Tmean_gradC),
