@@ -1,0 +1,158 @@
+---
+title: "ANNI_ LSTM"
+---
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(ggplot2)
+library(data.table)
+library(purrr)
+```
+
+
+### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+Die Daten haben ein Intervall von 14 Tagen
+```{r}
+data0 <- data.table::fread(
+    "../data/derived_data/input_tabelle_2020_2022_20230905_20cm_LSTM_complete.csv",
+    sep = ";", dec = ".") %>% as_tibble()
+
+data0 <- data0[,-c(2:3)]
+```
+
+#Daten skalieren
+Später neue Daten anhand dieser Werte skalieren
+```{r}
+data <- data0 %>% mutate_all(as.numeric)
+data <- as.matrix(data)
+dimnames(data) <- NULL
+set.seed(123)
+ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
+
+#X definieren:
+#Ab Spalte 7
+idx_x <- 2:ncol(data) #7:...
+training <- data[ind==1,idx_x]
+test <- data[ind==2, idx_x]
+
+#Target definieren:
+#erste 6 Spalten sind Y-Werte (nFK 0 - 60 cm)
+idx_y <- 1 #1:6
+trainingtarget <- data[ind==1, idx_y] 
+testtarget <- data[ind==2, idx_y]
+
+str(trainingtarget)
+str(testtarget)
+```
+
+```{r}
+m <- colMeans(training)
+s <- apply(training, 2, sd, na.rm=TRUE)
+s <- ifelse(s == 0, 1, s)
+training <- scale(training, center = m, scale = s)
+test <- scale(test, center = m, scale = s)
+```
+
+# Window Generator
+
+```{r}
+timeseries_generator(data = data0[,-1], 
+                     targets = data0[,1], length = 14, sampling_rate = 7, stride = 1)
+```
+
+
+# LSTM-Model initiieren:
+```{r}
+#expected shape=(None, 7, 1), found shape=(1, 25)
+
+lstm_model <- keras_model_sequential()
+ 
+lstm_model %>%
+  layer_lstm(units = 64, # size of the layer
+       batch_input_shape = c(14,28,1), # batch size, timesteps, features
+       return_sequences = TRUE,
+       stateful = TRUE) %>%
+  # fraction of the units to drop for the linear transformation of the inputs
+  layer_dropout(rate = 0.5) %>%
+  layer_lstm(units = 14,
+        return_sequences = TRUE,
+        stateful = TRUE) %>%
+  layer_dropout(rate = 0.5) %>%
+  time_distributed(keras::layer_dense(units = 1))
+```
+
+
+# Kompilieren:
+```{r}
+lstm_model %>%
+    compile(loss = 'mae', optimizer = 'adam', metrics = 'accuracy')
+ 
+summary(lstm_model)
+```
+
+
+
+
+#Model trainieren:
+```{r, message=FALSE}
+earlystopping = callback_early_stopping(monitor = "loss", 
+                                        min_delta = 1, 
+                                        patience = 5, 
+                                        mode = "min", 
+                                        restore_best_weights = TRUE                                            
+)
+
+lstm_model %>%          
+    fit(training,trainingtarget, 
+        epochs = 20,
+        batch_size = 1,
+        validation_split = 0.2, 
+        shuffle = FALSE,
+        callbacks = earlystopping#,
+        #verbose = FALSE
+    )
+
+# model %>%          
+#     fit(training,trainingtarget, 
+#         epochs = 100,
+#         batch_size = 50,
+#         validation_split = 0.2, 
+#         callbacks = earlystopping#,
+#         #verbose = FALSE
+#     )
+```
+
+
+#Model evaluieren:
+```{r}
+lstm_model %>% evaluate(test, testtarget)
+pred <- lstm_model %>% predict(test)
+mean((testtarget-pred)^2) 
+paste("RMSE =", round(mean(sqrt((testtarget-pred)^2)), 4))
+```
+
+<!-- #Ergebnis plotten: -->
+<!-- ```{r} -->
+<!-- x1 <- testtarget %>% as.data.frame() %>%  -->
+<!--     tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth") -->
+
+<!-- y1 <- pred %>% as.data.frame() %>%  -->
+<!--     tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>% select(predicted) -->
+
+<!-- result <- bind_cols(x1, y1) %>%  -->
+<!--     mutate_at("depth",  -->
+<!--               ~factor(., labels = c("nFK_0010_change", "nFK_1020_change", "nFK_2030_change",  -->
+<!--                                     "nFK_3040_change", "nFK_4050_change", "nFK_5060_change") )) -->
+
+
+<!-- ggplot(result, aes(measured, predicted)) +  -->
+<!--     geom_point(alpha = 0.05) +  -->
+<!--     geom_abline(slope = 1, intercept = 0, color = "red", linetype = 2) +  -->
+<!--     facet_wrap(depth~.) +  -->
+<!--     theme_bw() +  -->
+<!--     theme(panel.grid = element_blank()) -->
+<!-- ``` -->
