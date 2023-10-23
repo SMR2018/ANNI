@@ -18,71 +18,191 @@ library(purrr)
 Die Daten haben ein Intervall von 14 Tagen
 ```{r}
 data0 <- data.table::fread(
-    "../data/derived_data/input_tabelle_2020_2022_20230905_20cm_LSTM_complete.csv",
+    "../data/derived_data/input_tabelle_2020_2022_20231018_20cm_LSTM_complete.csv",
     sep = ";", dec = ".") %>% as_tibble()
-
-data0 <- data0[,-c(2:3)]
 ```
 
-#Daten skalieren
-Später neue Daten anhand dieser Werte skalieren
+# für univariate LSTM: nur Zeitreihen mit decreasing nFK wählen
 ```{r}
-data <- data0 %>% mutate_all(as.numeric)
-data <- as.matrix(data)
-dimnames(data) <- NULL
-set.seed(123)
-ind <- sample(2, nrow(data), replace = T, prob = c(.7, .3))
+data0 <- data0 %>% group_by(id_all) %>% 
+    mutate(diff1 = c(0, diff(T2040_nFK))) %>%
+    mutate(steigung = any(diff1 > 5)) %>% 
+    filter(!steigung) %>%
+    mutate(id_all = cur_group_id()) #ids neu benennen: 1 bis n()
 
-#X definieren:
-#Ab Spalte 7
-idx_x <- 2:ncol(data) #7:...
-training <- data[ind==1,idx_x]
-test <- data[ind==2, idx_x]
+data0$id_all %>% unique() %>% length
+```
 
-#Target definieren:
-#erste 6 Spalten sind Y-Werte (nFK 0 - 60 cm)
-idx_y <- 1 #1:6
-trainingtarget <- data[ind==1, idx_y] 
-testtarget <- data[ind==2, idx_y]
 
-str(trainingtarget)
-str(testtarget)
+# Plot der 91 übrigen Zeitreihen (von 143)
+```{r}
+ggplot(data0 %>%
+           group_by(id_all) %>%
+           mutate(Tage = 1:n()), aes(Tage, T2040_nFK, 
+                                     color = as.factor(id_all))) + 
+    geom_line() + 
+    theme(legend.position = "none")
+```
+
+
+
+<!-- #Daten skalieren -->
+<!-- Später neue Daten anhand dieser Werte skalieren -->
+<!-- ```{r} -->
+<!-- # data <- data0 %>% mutate_all(as.numeric) -->
+<!--  data <- sequence_x_days #as.matrix(data) -->
+<!-- # dimnames(data) <- NULL -->
+<!-- set.seed(123) -->
+<!-- ind <- sample(2, NROW(data0), replace = T, prob = c(.7, .3)) -->
+
+<!-- #X definieren: -->
+<!-- #Ab Spalte 5 -->
+<!-- idx_x <- 3 #5:ncol(data) #Test: nur zweite Schicht: T2040_nFK -->
+<!-- training <- data[ind==1,idx_x] -->
+<!-- test <- data[ind==2, idx_x] -->
+
+<!-- #Target definieren: -->
+<!-- # Spalten 2:4 sind Y-Werte (T0020_nFK, T2040_nFK, T4060_nFK) -->
+<!-- idx_y <- 3 #1:6, Test: nur zweite Schicht: T2040_nFK -->
+<!-- trainingtarget <- data[ind==1, idx_y]  -->
+<!-- testtarget <- data[ind==2, idx_y] -->
+
+<!-- str(trainingtarget) -->
+<!-- str(testtarget) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- m <- mean(training, na.rm = T) #colMeans(training) -->
+<!-- s <- sd(training, na.rm = T) #apply(training, 2, sd, na.rm=TRUE) -->
+<!-- s <- ifelse(s == 0, 1, s) -->
+<!-- training <- scale(training, center = m, scale = s) -->
+<!-- test <- scale(test, center = m, scale = s) -->
+<!-- ``` -->
+
+
+# Daten skalieren:
+```{r}
+m <- mean(data0$T2040_nFK, na.rm = T)
+s <- sd(data0$T2040_nFK, na.rm = T)
+data_scaled <- data0 %>% 
+    select(id_all, T0 = T2040_nFK) %>%
+    mutate(across("T0", ~ scale(., center = m, scale = s)))
+```
+
+
+```{r}
+# In Training und Test-Daten einteilen:
+#ind <- sample(2, nrow(data_scaled), replace = T, prob = c(.7, .3))
+
+ids <- unique(data_scaled$id_all)
+ind <- ceiling(length(ids) * 0.7)
+ind_training <- ids[1:ind] 
+ind_test <- ids[(ind+1):length(ids)]
+
+training_df <- data_scaled %>% filter(id_all %in% ind_training)
+test_df <- data_scaled %>% filter(id_all %in% ind_test) 
+```
+
+
+# Fünf (5) Tage Zeireihe für zweite Tiefe
+```{r}
+#Funktion für Sequentierung:
+
+to_sequence <- function(.data, spalte = "T0", seq_size = 3){
+    
+    n_out <- (nrow(.data)-seq_size)
+    data_out_x <- matrix(nrow = n_out, ncol = seq_size)
+    
+    for (i in 1:seq_size){
+        window_x <- .data[i:(n_out+i-1),spalte] %>% pull
+        data_out_x[,i] <- window_x
+        
+    }
+    data_out_y <- as.matrix(.data[(seq_size+1):(n_out + seq_size),spalte])
+    return(list(x = data_out_x, y=data_out_y))
+}
+
+#df_test <- training_df %>% ungroup() %>% filter(id_all == 1) %>% select(T0)
+#to_sequence(.data = df_test, seq_size = 5)$x
 ```
 
 ```{r}
-m <- colMeans(training)
-s <- apply(training, 2, sd, na.rm=TRUE)
-s <- ifelse(s == 0, 1, s)
-training <- scale(training, center = m, scale = s)
-test <- scale(test, center = m, scale = s)
+seq_size = 5
+
+# Funktion anwenden: alle Abfolgen (14 Tage Intervall) in Vor-Tage-Matrix auflösen
+training_sequence <- map(1:max(training_df$id_all),
+                         ~training_df %>% 
+                             ungroup() %>%
+                             filter(id_all == .x) %>%
+                             select(T0) %>% #=T2040_nFK
+                             to_sequence(.data = ., seq_size = seq_size)
+) 
+train_x <- map(training_sequence, ~.x[["x"]]) %>% list_c()
+train_y <- map(training_sequence, ~.x[["y"]]) %>% list_c()
+
+test_sequence <- map(unique(test_df$id_all),
+                     ~test_df %>% 
+                         ungroup() %>%
+                         filter(id_all == .x) %>%
+                         select(T0) %>% #=T2040_nFK
+                         to_sequence(.data = ., seq_size = seq_size)
+) 
+test_x <- map(test_sequence, ~.x[["x"]]) %>% list_c()
+test_y <- map(test_sequence, ~.x[["y"]]) %>% list_c()
+
+cat("Head des Trainingsdatensatzes:\n")
+head(train_x)
+cat("\n\n")
+cat(paste("Der Trainingsdatensatz enthält *", NROW(train_x), "* Zeilen."))
+
+# --> d.h. Eine Sequenz hat anschließend 9 Zeilen (fortlaufende Tage) und 5 Spalten (vergangene Tage); insgesamt also 14 Tage)
 ```
 
-# Window Generator
 
+# Reshape: # batch size, timesteps, features
 ```{r}
-timeseries_generator(data = data0[,-1], 
-                     targets = data0[,1], length = 14, sampling_rate = 7, stride = 1)
+# # train_x <- keras::k_reshape(train_x, shape = c(NROW(train_x),1,seq_size))
+# # test_x <- keras::k_reshape(test_x, shape = c(NROW(test_x),1,seq_size))
+#     
+
+test_x <- test_x[1:240,]
+test_y <- test_y[1:240,]
+
+train_x <- array(data = train_x, dim = c(NROW(train_x), 1, seq_size))
+train_y <- array(data = train_y, dim = c(NROW(train_x), 1))
+test_x <- array(data = test_x, dim = c(NROW(test_x), 1, seq_size))
+test_y <- array(data = test_y, dim = c(NROW(test_y), 1))
+
 ```
 
 
 # LSTM-Model initiieren:
 ```{r}
-#expected shape=(None, 7, 1), found shape=(1, 25)
+batch_size <- 4# NROW(train_x)/9 #64
 
 lstm_model <- keras_model_sequential()
- 
-lstm_model %>%
-  layer_lstm(units = 64, # size of the layer
-       batch_input_shape = c(14,28,1), # batch size, timesteps, features
-       return_sequences = TRUE,
-       stateful = TRUE) %>%
-  # fraction of the units to drop for the linear transformation of the inputs
-  layer_dropout(rate = 0.5) %>%
-  layer_lstm(units = 14,
-        return_sequences = TRUE,
-        stateful = TRUE) %>%
-  layer_dropout(rate = 0.5) %>%
-  time_distributed(keras::layer_dense(units = 1))
+
+lstm_model %>% 
+    layer_lstm(units = 64, # size of the layer
+               # batch_input_shape = c(NROW(train_x),1,seq_size), 
+               # batch_input_shape = c(1,1,seq_size), 
+               # batch size, timesteps, features
+               
+              # input_shape = c(1, seq_size),
+               #batch_size = 12, #length(ind_training), #NROW(train_x),
+               batch_input_shape = c(batch_size, 1,seq_size),
+               return_sequences = TRUE,
+               stateful = TRUE) %>%
+    # fraction of the units to drop for the linear transformation of the inputs
+    # layer_dropout(rate = 0.5) %>%
+    # layer_dense(units = 32) %>%
+    # # layer_lstm(units = 14,
+    # #       return_sequences = TRUE,
+    # #       stateful = TRUE) %>%
+    # layer_dropout(rate = 0.5) %>%
+    # time_distributed(keras::layer_dense(units = 1))
+    layer_dense(units = 1)
+
 ```
 
 
@@ -90,7 +210,7 @@ lstm_model %>%
 ```{r}
 lstm_model %>%
     compile(loss = 'mae', optimizer = 'adam', metrics = 'accuracy')
- 
+
 summary(lstm_model)
 ```
 
@@ -100,16 +220,16 @@ summary(lstm_model)
 #Model trainieren:
 ```{r, message=FALSE}
 earlystopping = callback_early_stopping(monitor = "loss", 
-                                        min_delta = 1, 
+                                        min_delta = 0.01, #da standardisierte Daten
                                         patience = 5, 
                                         mode = "min", 
                                         restore_best_weights = TRUE                                            
 )
 
 lstm_model %>%          
-    fit(training,trainingtarget, 
-        epochs = 20,
-        batch_size = 1,
+    fit(train_x,train_y, 
+        epochs = 100,
+        batch_size = batch_size,# length(ind_training),
         validation_split = 0.2, 
         shuffle = FALSE,
         callbacks = earlystopping#,
@@ -129,30 +249,33 @@ lstm_model %>%
 
 #Model evaluieren:
 ```{r}
-lstm_model %>% evaluate(test, testtarget)
-pred <- lstm_model %>% predict(test)
-mean((testtarget-pred)^2) 
-paste("RMSE =", round(mean(sqrt((testtarget-pred)^2)), 4))
+lstm_model %>% evaluate(test_x, test_y, batch_size = 4)
+pred <- lstm_model %>% predict(test_x, batch_size = 4)
+mean((test_y-pred[,,1])^2) 
+paste("RMSE =", round(mean(sqrt((test_y-pred[,,1])^2)), 4))
 ```
 
-<!-- #Ergebnis plotten: -->
-<!-- ```{r} -->
-<!-- x1 <- testtarget %>% as.data.frame() %>%  -->
-<!--     tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth") -->
+#Ergebnis plotten:
+```{r}
+x1 <- test_y %>% as.data.frame() %>%
+    tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
 
-<!-- y1 <- pred %>% as.data.frame() %>%  -->
-<!--     tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>% select(predicted) -->
+y1 <- pred %>% as.data.frame() %>%
+    tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>% select(predicted)
 
-<!-- result <- bind_cols(x1, y1) %>%  -->
-<!--     mutate_at("depth",  -->
-<!--               ~factor(., labels = c("nFK_0010_change", "nFK_1020_change", "nFK_2030_change",  -->
-<!--                                     "nFK_3040_change", "nFK_4050_change", "nFK_5060_change") )) -->
+result <- bind_cols(x1, y1) %>%
+    mutate_at("depth", 
+              ~factor(.)
+              
+              # ~factor(., labels = c("nFK_0010_change", "nFK_1020_change", "nFK_2030_change",
+              #                       "nFK_3040_change", "nFK_4050_change", "nFK_5060_change") )
+              )
 
 
-<!-- ggplot(result, aes(measured, predicted)) +  -->
-<!--     geom_point(alpha = 0.05) +  -->
-<!--     geom_abline(slope = 1, intercept = 0, color = "red", linetype = 2) +  -->
-<!--     facet_wrap(depth~.) +  -->
-<!--     theme_bw() +  -->
-<!--     theme(panel.grid = element_blank()) -->
-<!-- ``` -->
+ggplot(result, aes(measured, predicted)) +
+    geom_point(alpha = 0.05) +
+    geom_abline(slope = 1, intercept = 0, color = "red", linetype = 2) +
+    facet_wrap(depth~.) +
+    theme_bw() +
+    theme(panel.grid = element_blank())
+```
