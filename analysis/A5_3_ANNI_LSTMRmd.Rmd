@@ -13,6 +13,9 @@ library(data.table)
 library(purrr)
 ```
 
+```{r}
+rm(list = ls())
+```
 
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 Die Daten haben ein Intervall von 14 Tagen
@@ -165,11 +168,19 @@ cat(paste("Der Trainingsdatensatz enthält *", NROW(train_x), "* Zeilen."))
 # # test_x <- keras::k_reshape(test_x, shape = c(NROW(test_x),1,seq_size))
 #     
 
+# n = NROW(train_x)
+# m = NROW((test_x))
+# d = spatstat.utils::greatest.common.divisor(n,m)
+# spatstat.utils::greatest.common.divisor(14,12)
+
+batch_size <- 12 #4
+
+
 test_x <- test_x[1:240,]
 test_y <- test_y[1:240,]
 
 train_x <- array(data = train_x, dim = c(NROW(train_x), 1, seq_size))
-train_y <- array(data = train_y, dim = c(NROW(train_x), 1))
+train_y <- array(data = train_y, dim = c(NROW(train_y), 1))
 test_x <- array(data = test_x, dim = c(NROW(test_x), 1, seq_size))
 test_y <- array(data = test_y, dim = c(NROW(test_y), 1))
 
@@ -178,8 +189,6 @@ test_y <- array(data = test_y, dim = c(NROW(test_y), 1))
 
 # LSTM-Model initiieren:
 ```{r}
-batch_size <- 4# NROW(train_x)/9 #64
-
 lstm_model <- keras_model_sequential()
 
 lstm_model %>% 
@@ -249,18 +258,25 @@ lstm_model %>%
 
 #Model evaluieren:
 ```{r}
-lstm_model %>% evaluate(test_x, test_y, batch_size = 4)
-pred <- lstm_model %>% predict(test_x, batch_size = 4)
-mean((test_y-pred[,,1])^2) 
-paste("RMSE =", round(mean(sqrt((test_y-pred[,,1])^2)), 4))
+lstm_model %>% evaluate(test_x, test_y, batch_size = batch_size)
+pred <- lstm_model %>% predict(test_x, batch_size = batch_size)
+
+#rescale to normal nFK-values:
+pred_nFK <- pred[,,1] * s + m
+test_y_nFK <- test_y * s + m
+
+#Gütemaße:
+mean((test_y_nFK-pred_nFK)^2) 
+paste("RMSE =", round(mean(sqrt((test_y_nFK-pred_nFK)^2)), 4))
+#plot(test_y_nFK, pred_nFK)
 ```
 
 #Ergebnis plotten:
 ```{r}
-x1 <- test_y %>% as.data.frame() %>%
+x1 <- test_y_nFK %>% as.data.frame() %>%
     tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
 
-y1 <- pred %>% as.data.frame() %>%
+y1 <- pred_nFK %>% as.data.frame() %>%
     tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>% select(predicted)
 
 result <- bind_cols(x1, y1) %>%
@@ -279,3 +295,5 @@ ggplot(result, aes(measured, predicted)) +
     theme_bw() +
     theme(panel.grid = element_blank())
 ```
+
+
