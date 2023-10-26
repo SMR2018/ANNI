@@ -44,7 +44,8 @@ ggplot(data0 %>%
            mutate(Tage = 1:n()), aes(Tage, T2040_nFK, 
                                      color = as.factor(id_all))) + 
     geom_line() + 
-    theme(legend.position = "none")
+    theme_bw() + 
+    theme(legend.position = "none", panel.grid = element_blank())
 ```
 
 
@@ -131,6 +132,8 @@ to_sequence <- function(.data, spalte = "T0", seq_size = 3){
 
 ```{r}
 seq_size = 5
+# --> d.h. Eine Sequenz hat anschließend 9 Zeilen (fortlaufende Tage) und 5 Spalten (vergangene Tage); insgesamt also 14 Tage)
+
 
 # Funktion anwenden: alle Abfolgen (14 Tage Intervall) in Vor-Tage-Matrix auflösen
 training_sequence <- map(1:max(training_df$id_all),
@@ -157,8 +160,6 @@ cat("Head des Trainingsdatensatzes:\n")
 head(train_x)
 cat("\n\n")
 cat(paste("Der Trainingsdatensatz enthält *", NROW(train_x), "* Zeilen."))
-
-# --> d.h. Eine Sequenz hat anschließend 9 Zeilen (fortlaufende Tage) und 5 Spalten (vergangene Tage); insgesamt also 14 Tage)
 ```
 
 
@@ -166,15 +167,8 @@ cat(paste("Der Trainingsdatensatz enthält *", NROW(train_x), "* Zeilen."))
 ```{r}
 # # train_x <- keras::k_reshape(train_x, shape = c(NROW(train_x),1,seq_size))
 # # test_x <- keras::k_reshape(test_x, shape = c(NROW(test_x),1,seq_size))
-#     
 
-# n = NROW(train_x)
-# m = NROW((test_x))
-# d = spatstat.utils::greatest.common.divisor(n,m)
-# spatstat.utils::greatest.common.divisor(14,12)
-
-batch_size <- 12 #4
-
+batch_size <- 4 #4
 
 test_x <- test_x[1:240,]
 test_y <- test_y[1:240,]
@@ -184,6 +178,10 @@ train_y <- array(data = train_y, dim = c(NROW(train_y), 1))
 test_x <- array(data = test_x, dim = c(NROW(test_x), 1, seq_size))
 test_y <- array(data = test_y, dim = c(NROW(test_y), 1))
 
+# train_x <- array(data = train_x, dim = c(NROW(train_x), seq_size, 1))
+# train_y <- array(data = train_y, dim = c(NROW(train_y), 1))
+# test_x <- array(data = test_x, dim = c(NROW(test_x), seq_size,1))
+# test_y <- array(data = test_y, dim = c(NROW(test_y), 1))
 ```
 
 
@@ -191,27 +189,31 @@ test_y <- array(data = test_y, dim = c(NROW(test_y), 1))
 ```{r}
 lstm_model <- keras_model_sequential()
 
-lstm_model %>% 
-    layer_lstm(units = 64, # size of the layer
-               # batch_input_shape = c(NROW(train_x),1,seq_size), 
-               # batch_input_shape = c(1,1,seq_size), 
-               # batch size, timesteps, features
-               
-              # input_shape = c(1, seq_size),
-               #batch_size = 12, #length(ind_training), #NROW(train_x),
+lstm_model %>%
+    layer_lstm(units = 64,
                batch_input_shape = c(batch_size, 1,seq_size),
                return_sequences = TRUE,
                stateful = TRUE) %>%
-    # fraction of the units to drop for the linear transformation of the inputs
-    # layer_dropout(rate = 0.5) %>%
+    # layer_dropout(rate = 0.2) %>%
     # layer_dense(units = 32) %>%
-    # # layer_lstm(units = 14,
-    # #       return_sequences = TRUE,
-    # #       stateful = TRUE) %>%
-    # layer_dropout(rate = 0.5) %>%
+    # layer_lstm(units = 32,
+    #       return_sequences = TRUE,
+    #       stateful = TRUE) %>%
+    # layer_dropout(rate = 0.2) %>%
     # time_distributed(keras::layer_dense(units = 1))
     layer_dense(units = 1)
 
+# lstm_model %>% 
+#     layer_lstm(units = 64, 
+#                batch_input_shape = c(batch_size, seq_size, 1),
+#                return_sequences = FALSE
+#     ) %>%
+#     keras::layer_repeat_vector(n = seq_size) %>%
+#     layer_lstm(units = 64,
+#                return_sequences = TRUE,
+#                stateful = TRUE
+#     ) %>%
+#     time_distributed(keras::layer_dense(units = 1))
 ```
 
 
@@ -240,7 +242,7 @@ lstm_model %>%
         epochs = 100,
         batch_size = batch_size,# length(ind_training),
         validation_split = 0.2, 
-        shuffle = FALSE,
+        shuffle = FALSE, 
         callbacks = earlystopping#,
         #verbose = FALSE
     )
@@ -260,10 +262,12 @@ lstm_model %>%
 ```{r}
 lstm_model %>% evaluate(test_x, test_y, batch_size = batch_size)
 pred <- lstm_model %>% predict(test_x, batch_size = batch_size)
+#pred <- lstm_model %>% predict(train_x, batch_size = batch_size) 
 
 #rescale to normal nFK-values:
 pred_nFK <- pred[,,1] * s + m
 test_y_nFK <- test_y * s + m
+#test_y_nFK <- train_y * s + m 
 
 #Gütemaße:
 mean((test_y_nFK-pred_nFK)^2) 
@@ -285,7 +289,7 @@ result <- bind_cols(x1, y1) %>%
               
               # ~factor(., labels = c("nFK_0010_change", "nFK_1020_change", "nFK_2030_change",
               #                       "nFK_3040_change", "nFK_4050_change", "nFK_5060_change") )
-              )
+    )
 
 
 ggplot(result, aes(measured, predicted)) +
@@ -295,5 +299,26 @@ ggplot(result, aes(measured, predicted)) +
     theme_bw() +
     theme(panel.grid = element_blank())
 ```
+# Plot der Test-Zeitreihen:
+```{r}
+df_pred_id <- data.frame(
+    measured = test_y_nFK, 
+    predicted = pred_nFK) %>%
+    mutate(id_all = rep(1:ceiling(n()/9), each = 9)[1:n()]) %>%
+    group_by(id_all) %>%
+    mutate(Tage = 1:n()) %>% 
+    ungroup() %>%
+    mutate(x= 1:n())
 
+ggplot(df_pred_id, aes(x=x)) +
+    geom_line(aes(y=measured, col = "gemessen")) +
+    geom_line(aes(y=predicted, col = "modelliert")) +
+    theme_bw()+
+    theme(panel.grid = element_blank())
+```
+
+```{r}
+
+
+```
 
