@@ -12,6 +12,7 @@ library(lubridate)
 library(ggnewscale)
 library(tidyr)
 library(DBI)
+library(purrr)
 ```
 
 #Wetter-Daten aus DB auslesen:
@@ -79,53 +80,11 @@ input_tabelle <- input_tabelle %>%
     group_by(satz_id, variante_H2O, wiederholung) %>%
     #Fehlende Werte Approximieren:
     mutate(across(.cols = contains("nFK"), 
-                  ~zoo::na.approx(., na.rm = FALSE)))
+                 # ~zoo::na.approx(., na.rm = FALSE))
+           ~stats::approx(x = ., n = n(), rule = 2, method = "linear")$y)
+           #~Hmisc::approxExtrap(x = 1:n(), y=.x, xout = 1:n(), na.rm = T, rule=2, method = "constant")$y
+    )
 ```
-
-\
-# Wassergehalt in mm (fließt nicht mehr in ANNI ein)
-<!-- ### Vol% Wasser bei 100% nFK für drei Bodentiefen (Schichttiefe je 20cm) -->
-<!-- ```{r} -->
-<!-- B10_mm_bei100nFK <- 49.3/30*10 #Tabellenwert steht für 30cm Schichtdicke. Umrechnen auf 10cm. -->
-<!-- B50_mm_bei100nFK <- 46.1/30*10 -->
-<!-- B30_mm_bei100nFK <- B10_mm_bei100nFK - (B10_mm_bei100nFK-B50_mm_bei100nFK)/2 -->
-<!-- ``` -->
-<!-- # Bodenwassergehalt in mm berechnen: -->
-<!-- ```{r} -->
-<!-- input_tabelle <- input_tabelle %>% -->
-<!--     # #Auswaschung berechnen: -->
-<!--     # mutate(B10_Auswaschung_prozent_nFK = ifelse(B10_nFK > 100, B10_nFK - 100, 0), -->
-<!--     #        B30_Auswaschung_prozent_nFK = ifelse(B30_nFK > 100, B30_nFK - 100, 0), -->
-<!--     #        B50_Auswaschung_prozent_nFK = ifelse(B50_nFK > 100, B50_nFK - 100, 0)) %>% -->
-<!--     #  -->
-<!--     # mutate(B10_Auswaschung_mm = B10_Auswaschung_prozent_nFK * 0.01 * B10_mm_bei100nFK, -->
-<!--     #        B30_Auswaschung_mm = B30_Auswaschung_prozent_nFK * 0.01 * B30_mm_bei100nFK, -->
-<!--     #        B50_Auswaschung_mm = B50_Auswaschung_prozent_nFK * 0.01 * B50_mm_bei100nFK) %>% -->
-<!--     #  -->
-<!--     #nFK in mm umrechnen: -->
-<!--     mutate(B10_mm = 0.01 * nFK_0010 * B10_mm_bei100nFK, -->
-<!--            B20_mm = 0.01 * nFK_1020 * B10_mm_bei100nFK, -->
-<!--            B30_mm = 0.01 * nFK_2030 * B30_mm_bei100nFK, -->
-<!--            B40_mm = 0.01 * nFK_3040 * B30_mm_bei100nFK, -->
-<!--            B50_mm = 0.01 * nFK_4050 * B50_mm_bei100nFK, -->
-<!--            B60_mm = 0.01 * nFK_5060 * B50_mm_bei100nFK) %>% -->
-
-<!--     # #"freien Speicher" berechnen: Wieviel mm Wasser kann die Schicht noch aufnehmen? -->
-<!--     # mutate(freier_Speicher_B10_mm = B10_mm_bei100nFK - B10_mm, -->
-<!--     #        freier_Speicher_B30_mm = B30_mm_bei100nFK - B30_mm, -->
-<!--     #        freier_Speicher_B50_mm = B50_mm_bei100nFK - B50_mm) %>%  -->
-
-<!--     rowwise() %>% -->
-<!--     mutate(T0060_mm = sum(across(B10_mm:B60_mm), na.rm = FALSE)) %>% -->
-<!--     #Wenn ein Tensiometer-Wert einer Schicht fehlt, dann wird T0060_mm auf NA gesetzt. -->
-<!--     ungroup() -->
-
-<!-- #filter_at(c("B10_nFK","B30_nFK","B50_nFK"), any_vars(.<52)) -->
-
-<!-- input_tabelle  -->
-<!-- ``` -->
-
-
 
 
 ## Bodenart anfuegen
@@ -138,7 +97,7 @@ input_tabelle <- input_tabelle %>%
 ```
 
 ## ISARIA-Daten anfügen
-```{r}
+```{r, eval=FALSE}
 db1 <- dbConnect(RSQLite::SQLite(), db)
 isaria <- dbGetQuery(db1, "SELECT
                      Spinat_Saetze.satz_id,
@@ -162,13 +121,14 @@ isaria <- isaria %>%
     mutate_if(is.numeric, ~round(., 2))
 
 
-#NEU: smoothed data aus Auswertung verwenden!
+# #NEU: smoothed data aus Auswertung verwenden!
 # isaria <- fread("../../GeoSenSys2020/Auswertung_Saetze/ISARIA_Alignment/HGU_ISARIA_extrapolated_smoothed.csv") %>%
 #      mutate_at("datum_messung", ~as_date(.))
 ```
 
+
 #Isaria: Interpolation zwischen den Messtagen:
-```{r}
+```{r, eval=FALSE}
 input_tabelle <- input_tabelle %>% 
     left_join(isaria, by = c("satz_id", "variante_H2O", "wiederholung", "zeit_messung" = "datum_messung")) %>% 
     group_by(satz_id, variante_H2O, wiederholung) %>%
@@ -187,6 +147,36 @@ input_tabelle <- input_tabelle %>%
 ```
 \
 
+# ISARIA V2: berechnen:
+```{r}
+ymin = 5 #nls um 5 nach oben schieben (minimalwert bei fitting geht durch 0)
+
+input_tabelle <- input_tabelle %>%
+    mutate(dae_geschaetzt = 14/(1 + exp((11 - Tmean_th9_25_gradC)/-3)), 
+           .after = "zeit_messung") %>% 
+    #Modell händisch angepasst (da wenige Daten)
+    #nicht Tmean_th9_25_gradC_sum, sondern tages mittelwert!, da fitting auf mittelwerten (namen dabei nicht angepasst)
+    mutate(across("dae_geschaetzt", ~ceiling(.+ymin))) %>%
+    #Mittelwerte der geschätzen DAE seit Aussaat:
+    mutate(dae_geschaetzt_mittel = cumsum(dae_geschaetzt) / tage_seit_aussaat, .after = "dae_geschaetzt") %>%
+    #select(datum, tage_seit_aussaat, dae_geschaetzt, dae_geschaetzt_mittel) %>%
+    mutate(dae_erreicht = ifelse(dae_geschaetzt_mittel < tage_seit_aussaat, 1, 0)) %>%
+    mutate(dae = cumsum(dae_erreicht)) %>%
+    select(-dae_geschaetzt, -dae_erreicht, -dae_geschaetzt_mittel)
+
+
+#IBI und IRMI berechnen:
+#ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_sum_dae)/63.903)) 
+#irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_sum_dae)/224.165))
+
+input_tabelle <- input_tabelle %>%
+    ## tageslicht_h_th9_sum_dae berechnen:
+    mutate(tageslicht_h_th9_sum_dae = cumsum(ifelse(dae > 0, tageslicht_h_th9, 0))) %>%
+    mutate(ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_sum_dae)/63.903)),
+           irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_sum_dae)/224.165))) %>%
+    select(-dae, -tageslicht_h_th9_sum_dae)
+
+```
 
 ### nFK vom Vortag als Input ausweisen:
 ```{r}
@@ -226,62 +216,126 @@ input_tabelle <-
 
 #Benötigte Variablen selektieren.
 ```{r}
-input_tabelle <- 
+# für MLP:
+input_tabelle_final <- 
     input_tabelle  %>%
-    select(-niederschlag_mm, -bewaesserung_mm, -wasser_input,
-           #-satz_id, 
-           -wetter_id, -FAO56_mm, -FAO56_mm_sum, -par_Wh_m2#,
-           #-wiederholung, -variante_H2O, -zeit_messung
+    #raus soll:
+    select(-niederschlag_mm, -bewaesserung_mm, 
+           #-wasser_input, belassen für LSTM
+           -wetter_id, -FAO56_mm, -FAO56_mm_sum, -par_Wh_m2,  
+           #par_Wh_m2 raus, da bei vielen Stationen nicht enthalten
+           -starts_with("bodensaugspannung"), -starts_with("pf")
     ) %>%
-    #par_Wh_m2 raus, da bei vielen Stationen nicht enthalten
-    select(satz_id, wiederholung, variante_H2O, contains("nFK"), !contains("nFK")) %>%
-    tidyr::drop_na()
+    #sortierung der Spalten:
+    select(satz_id, variante_H2O, wiederholung, contains("nFK"), !contains("nFK")) #%>% 
+#tidyr::drop_na() #für LSTM herausnehmen. Bis hierhin sind die Zeitreihen vollständig (alle Tage vorhanden)
+
+
+
+## für LSTM:
+# input_tabelle <-
+#     input_tabelle  %>%
+#     select(-niederschlag_mm, -bewaesserung_mm,
+#            -wetter_id, -FAO56_mm, -FAO56_mm_sum, -par_Wh_m2
+#     ) %>%
+#     #par_Wh_m2 raus, da bei vielen Stationen nicht enthalten
+#     select(satz_id, wiederholung, variante_H2O, contains("nFK"), !contains("nFK"))
 ```
 
 
-#gleiche Intervalle für LSTM-Anni
+# LSTM-Anpassung
+
+## Spalten wählen und NA entfernen:
+```{r}
+input_tabelle <- input_tabelle %>% 
+    select(-ends_with("Vortag"),  #ohne Vortag, da Zeitreihe nachträglich
+           -starts_with(c("bodensaugspannung_","pf_")))
+
+# NA passgenau entfernen:
+input_tabelle <- input_tabelle %>% 
+    filter(if_all(ends_with("_nFK"), ~!is.na(.))) %>% 
+    filter(satz_id != 5 | tage_seit_aussaat <42) %>%
+    filter(satz_id != 8 | tage_seit_aussaat <46) 
+# filter(if_any(everything(), ~is.na(.)))
+
+```
+
+
+## Gleiches Intervall für LSTM-Anni (14 Tage)
 ```{r}
 i1 <- input_tabelle %>% 
     group_by(satz_id, variante_H2O, wiederholung) %>%
+    mutate(id = cur_group_id(), .after = "variante_H2O") %>%
+    group_by(id) %>%
+    #select(-satz_id, -variante_H2O, -wiederholung) %>%
     mutate(nn = n()) %>% filter(nn >= 14) 
 
-i14 <- i1 %>% filter(nn == 14)
-i14plus <- i1 %>% filter(between(nn,15, 30))
+# i14plus <- i1 %>% filter(between(nn,15, 30))
 i30plus <- i1 %>% filter(nn > 30)
 
 idx1 <- 1:14
 idx2 <- max(idx1)-1
 idx3 <- 10:23
 
-i14_sliced <- i14 %>%
-    mutate(nx = 1:n(), .after = "variante_H2O")
+list_df1 <- map_df(list(#"1"=i14plus,
+                        "2"=i30plus ), 
+                   ~.x %>% slice(idx1) %>%
+                       mutate(nx = 1:n()), .id = "list_nr"
+)
 
-i14plus_sliced <- i14plus %>% slice(idx1,(n()-idx2):n()) %>%
-    mutate(nx = 1:n(), .after = "variante_H2O")
+list_df2 <- map_df(list(#"3"=i14plus, 
+                        "4"=i30plus ), 
+                   ~.x %>% slice((n()-idx2):n()), .id = "list_nr"
+)
 
-i30plus_sliced <- i30plus %>% slice(idx1,(n()-idx2):n(), idx3) %>%
-    mutate(nx = 1:n(), .after = "variante_H2O")
+list_df3 <- i30plus %>% slice(idx3) %>% mutate(list_nr = "5")
 
-df_same_lengths <- bind_rows(i14_sliced, i14plus_sliced, i30plus_sliced) %>%
-    group_by(satz_id, variante_H2O, wiederholung) %>% 
-    mutate(sub1  = case_when(nx<=14 ~ 1,
-                             between(nx,15,28) ~ 2,
-                             nx > 28 ~ 3,
-                             T ~ 999)) %>% 
-    # group_by(satz_id, variante_H2O, wiederholung, sub1) %>%
-    # summarise(nn2 = n()) %>%
-    ungroup()
+sliced_together <- bind_rows(list_df1, list_df2, list_df3) %>% 
+    group_by(list_nr, id) %>%
+    mutate(id_all = cur_group_id(), .before = "list_nr") %>%
+    group_by(id_all) %>% 
+    select(-list_nr, -id, -nn, -nx)
 
+#sliced_together %>% group_by(id_all) %>% summarise(nn = n())
 
-input_tabelle <- df_same_lengths %>% 
-    select(-satz_id, -wiederholung, -variante_H2O, -nx, -nn, -sub1,
-           -starts_with(c("bodensaugspannung_","pf_")))
+rm(list_df1, list_df2, list_df3, i1, i14plus, i30plus, idx1, idx2, idx3)  
+```
+
+```{r}
+input_tabelle_final <- sliced_together
 ```
 
 
 ### Tabelle speichern on Projekt-Ordner für Daten
 ```{r}
-# write.table(x = input_tabelle,
-#             file = "../data/derived_data/input_tabelle_2020_2022_20230905_20cm_LSTM_complete.csv",
+# write.table(x = input_tabelle_final,
+#             file = paste0("../data/derived_data/",
+#             #"input_tabelle_2020_2022_20231101_20cm_LSTM_complete_id.csv"),
+#             "input_tabelle_2020_2022_20231113_20cm_complete_mitNA.csv"),
 #             sep = ";",dec = ".", row.names = FALSE)
 ```
+
+
+
+## Visuelle Prüfung:
+```{r}
+p1 <- ggplot(input_tabelle_final %>% select(satz_id, variante_H2O, wiederholung, tage_seit_aussaat, ends_with("nFK")) %>% pivot_longer(cols = ends_with("nFK")), 
+       aes(x = tage_seit_aussaat, y=value,
+                                col = variante_H2O, linetype = wiederholung)) + 
+    geom_line() + 
+    facet_grid(name~satz_id)
+
+p1
+
+p2 <- ggplot(input_tabelle_final %>% select(satz_id, variante_H2O, wiederholung, tage_seit_aussaat, ibi, irmi) %>% pivot_longer(cols = ibi:irmi), 
+       aes(x = tage_seit_aussaat, y=value,
+                                col = variante_H2O, linetype = wiederholung)) + 
+    geom_line() + 
+    facet_grid(name~satz_id, scales = "free_y")
+p2
+```
+```{r}
+#?
+input_tabelle_final %>% group_by(satz_id, variante_H2O) %>% summarise(min1 = min(tage_seit_aussaat))
+```
+
