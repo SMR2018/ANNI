@@ -1,0 +1,486 @@
+---
+title: "ANNI_LSTM"
+---
+
+To-Do:
+/- mehrere Outputs (drei Tiefen)
+/- Impactanalyse Olden ##geht nicht für LSTM, oder?
+/ - unwichtige Parameter entfernen
+/- längere Zeitreihen testen
+/- batch size ändern
+/- mehrere Layer
+/ - weitere Parameter: dropout, optimizer adam, standardize...?
+- Beispiel: LSTM für R auf Keras/Tensorflow Website
+
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(ggplot2)
+library(ggpubr)
+library(data.table)
+library(purrr)
+library(tidyr)
+```
+
+```{r}
+rm(list = ls())
+```
+
+### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+Die Daten haben ein Intervall von 14 Tagen
+
+# X und Y Parameter benennen:
+```{r}
+names_x <- c("tage_seit_aussaat", 
+             "Tmean_gradC", 
+             "Tmean_th9_25_gradC", 
+             "Tmin_gradC", 
+             "Tmax_gradC", 
+             "relLuftfeuchte_mean_prozent", 
+             "relLuftfeuchte_min_prozent", 
+             "relLuftfeuchte_max_prozent", 
+             "globalstrahlung_Wh_m2", 
+             "windgeschwindigkeit_m_s", 
+             "tageslicht_h", 
+             "tageslicht_h_th9", 
+             "Tmean_gradC_sum", 
+             "Tmean_th9_25_gradC_sum", 
+             "globalstrahlung_Wh_m2_sum", 
+             "niederschlag_mm_sum", 
+             "tageslicht_h_sum", 
+             "tageslicht_h_th9_sum", 
+             ##"Ton_prozent", 
+             ##"Schluff_prozent", 
+             ##"Sand_prozent", 
+             ##"C_org_prozent", 
+             "ibi", 
+             "irmi",
+             "wasser_input"
+)
+
+names_y <- c(
+    "T0020_nFK", 
+    "T2040_nFK",
+    "T4060_nFK"
+)
+
+```
+
+
+## A) Versuchsdaten, oder
+```{r}
+data0 <- data.table::fread(paste0(
+    "../data/derived_data/",
+    "input_tabelle_2020_2022_20231101_20cm_LSTM_complete_id.csv"),
+    # input_tabelle_2020_2022_20231101_20cm_LSTM_complete.csv"),
+    sep = ";", dec = ".") %>% as_tibble()
+
+kulturdauer = 14
+```
+
+## B) AMBAV-Daten
+```{r}
+# file_list <- list.files("../../DWD_database_ANNI2/data/derived_data/DWD_data/",
+#                         pattern = "alle_stationsdaten_zusammen_mit_id", full.names = T)
+# data0 <- map_df(file_list, ~fread(.)) %>% as_tibble()
+```
+
+### AMBAV-vervollständigen
+```{r}
+# Greznwert_temp <- 9.1
+# kulturdauer <- 50
+# 
+# data0 <- 
+#     data0 %>% 
+#     #filter(Tmean_gradC > 5) %>% #nur für Zeiträume mit Temp >5°C
+#     # filter(globalstrahlung_Wh_m2 < 10000, unplausible Daten löschen
+#     #        ) %>%  
+#     group_by(id) %>%
+#     mutate(tage_seit_aussaat = rep(1:kulturdauer, length.out = n()),
+#            id2 = rep(1:(ceiling(n()/kulturdauer)), each = kulturdauer, length.out = n()),
+#            Tmean_th9_25_gradC = ifelse(Tmean_gradC > 25, 25,Tmean_gradC), .after = "Tmean_gradC") %>%
+#     mutate_at("Tmean_th9_25_gradC", ~ifelse(.<Greznwert_temp,0,.)) %>%
+#     mutate(tageslicht_h_th9 = ifelse(Tmean_gradC >= Greznwert_temp, tageslicht_h, 0)) %>%
+#     mutate(tageslicht_h_th9_7d = ifelse(tage_seit_aussaat <= 7, 0, tageslicht_h_th9)) %>% 
+#     mutate(across(c("tageslicht_h", "tageslicht_h_th9","tageslicht_h_th9_7d","Tmean_gradC", "globalstrahlung_Wh_m2", "Tmean_th9_25_gradC"), ~cumsum(.), .names = "{.col}_sum")) %>%
+#     mutate(ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_7d_sum)/63.903)), 
+#            irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_7d_sum)/224.165))) %>%
+#     group_by(id, id2) %>% 
+#     mutate(id_all = cur_group_id(), .after = "id") %>%
+#     mutate(T0020_nFK = nFK_1020, #names_y
+#            T2040_nFK = nFK_3040,
+#            T4060_nFK = nFK_5060) %>%
+#     group_by(id_all) %>% 
+#     add_count %>%
+#     filter(n == kulturdauer) %>% ##kürzere Zeitreihen als 14 Tage entfernen, da sonst bei Shape für Keras Fehler
+#     mutate(auswaschung_y_n = +(if_any(starts_with("nFK"),  ~. > 100)), #Gibt es Auswaschung? Ja, nein
+#            n_tage_auswaschung = sum(auswaschung_y_n), .after = "id_all") %>% #Anzahl der Tage mit Auswaschung
+#     #Auswaschungstage sollten weniger als 1/4 der Zeitreihe ausmachen. Sonst raus:
+#     filter((n_tage_auswaschung/n()) < 0.25)  %>% 
+#     mutate(id_all = cur_group_id()) # ID nach dem filtern neu von 1:n() benennen
+# #summarise(nn = n()) %>% pull(nn) %>% hist
+# 
+# # data_bodenart <- data0 %>% 
+# #     slice(1:200000) %>%
+# #     mutate(Ton_prozent = 46.5,
+# #            Schluff_prozent = 35.5,
+# #            Sand_prozent = 18,
+# #            C_org_prozent = 1.3)
+# # 
+# # data0 <- bind_rows(data0, data_bodenart)
+# 
+# 
+# # names_x[!names_x %in% names(data0)] #parameter fehlt
+# # names(data0)[!names(data0) %in% names_x] #zusätzliche parameter
+```
+
+
+# Parameter auswählen
+```{r}
+data1 <- data0 %>% 
+    select(all_of(c("id_all", names_y, names_x))) %>%
+    mutate_all(as.numeric) %>% as.matrix()
+```
+
+
+# Plot einiger Zeitreihen
+```{r}
+ggplot(data0 %>%
+           group_by(id_all) %>% filter(id_all < 50) %>%
+           mutate(Tage = 1:n()), aes(Tage, T2040_nFK, 
+                                     color = as.factor(id_all))) + 
+    geom_line() + 
+    theme_bw() + 
+    theme(legend.position = "none", panel.grid = element_blank())
+```
+
+
+
+
+#Daten skalieren
+Später neue Daten anhand dieser Werte skalieren
+
+
+```{r}
+m <- colMeans(data1)
+s <- apply(data1, 2, sd, na.rm=TRUE)
+s <- ifelse(s == 0, 1, s)
+data1_scaled <- scale(data1, center = m, scale = s)
+data1_scaled[,"id_all"] <- data0$id_all
+```
+
+#Skalierungs-Daten speichern für Skalierung neuer Input-Daten in der Anwendung
+```{r}
+scaling_data <- data.frame(m=m, s=s, parameter = colnames(data1))
+fwrite(scaling_data, file = "../data/derived_data/Models_paper/X2_scaling_data_2023116.csv")
+```
+
+
+# Aufteilung in Trainings- und Test-Datensatz
+```{r}
+# In Training und Test-Daten einteilen:
+
+ids <- unique(data0$id_all)
+ind <- ceiling(length(ids) * 0.7)
+ind_training <- ids[1:ind] 
+ind_test <- ids[(ind+1):length(ids)]
+
+training_df <- data1_scaled[which(data0$id_all %in% ind_training),]
+test_df <- data1_scaled[which(data0$id_all %in% ind_test),]
+```
+
+```{r}
+zuord0 <- 
+    data0 %>% 
+    select(id_all, satz_id, variante_H2O, wiederholung) %>% 
+    distinct() %>% 
+    mutate(training_test = ifelse(id_all %in% ind_training, 
+                                  "Training_df", "Test_df"))
+zuord0
+```
+
+
+
+#Sequence-Funktion 2
+```{r}
+## Diese Funktion ist auch gespeichert unter... Funktionen/to_sequence.R
+
+to_sequence <- function(.data, spalte_y = "T0020_nFK", spalte_x = "T0", n_future = 1, n_past = 5){
+    # n_future = 1   # Number of days we want to look into the future based on the past days.
+    # n_past = 5  # Number of past days we want to use to predict the future.
+    
+    #Empty lists to be populated using formatted training data
+    trainX <- matrix(ncol = length(spalte_x)) 
+    trainY <- matrix(ncol = length(spalte_y)) 
+    
+    range1 <- range(n_past, nrow(.data) - n_future)
+    seq1 <- seq(from=range1[1], to=range1[2])
+    
+    for (i in seq1){
+        idx1 <- (1 + i - n_past):i
+        trainX <- rbind(trainX, 
+                        as.matrix(.data)[idx1, spalte_x, drop = FALSE]) 
+        #5 aufeinander folgende Werte
+        trainY <- rbind(trainY, 
+                        as.matrix(.data)[(i + n_future), spalte_y, drop = FALSE]) 
+        #nur eine Zahl
+    }
+    trainX <- trainX[-1, ,  drop = FALSE] #ersten NA-Eintrag löschen
+    trainY <- trainY[-1, ,  drop = FALSE]
+    
+    return(list(x = trainX, y=trainY))
+}
+
+# # #Beispiel: Funktion anwenden:
+# .data <- training_df[training_df[,"id_all"] == 1, c(names_y, names_x), drop = FALSE]
+# 
+# t <- to_sequence(.data = .data,
+#                  spalte_y = names_y,
+#                  spalte_x = c(names_y, names_x[1:2]),
+#                  n_future = 1,
+#                  n_past = 5)$x
+# k <- keras::k_reshape(t, shape = c(9,5,3)) #c(9,5,21))
+# 
+# head(t)
+# k
+```
+
+
+
+```{r}
+n_past = 7
+
+# Funktion anwenden: alle Abfolgen (14 Tage Intervall) in Vor-Tage-Matrix auflösen
+training_sequence <- map(
+    1:max(training_df[,"id_all"]),
+    ~training_df[training_df[,"id_all"] == .x, , drop = FALSE] %>% 
+        to_sequence(.data = .,
+                    spalte_y = names_y, 
+                    spalte_x = c(names_y, names_x), 
+                    n_future = 1, 
+                    n_past = n_past)
+) 
+train_x <- map(training_sequence, ~.x[["x"]]) %>% list_c()
+train_y <- map(training_sequence, ~.x[["y"]]) %>% list_c()
+
+
+test_sequence <- map(
+    unique(test_df[,"id_all"]),
+    ~test_df[test_df[,"id_all"] == .x, , drop = FALSE] %>% 
+        to_sequence(.data = .,
+                    spalte_y = names_y, 
+                    spalte_x = c(names_y, names_x), 
+                    n_future = 1, 
+                    n_past = n_past)
+) 
+test_x <- map(test_sequence, ~.x[["x"]]) %>% list_c()
+test_y <- map(test_sequence, ~.x[["y"]]) %>% list_c()
+
+
+# cat("Head des Trainingsdatensatzes:\n")
+# head(train_x)
+# cat("\n\n")
+# cat(paste("Der Trainingsdatensatz enthält *", NROW(train_x), "* Zeilen."))
+```
+
+
+# Reshape: # batch size, timesteps, features
+```{r}
+#Reformat input data into a shape: (n_samples x timesteps x n_features)
+n_seq1 = length(training_sequence)
+n_seq_test <- length(test_sequence)
+rows1 <- kulturdauer - n_past #14-n_past 
+rows_total <- rows1 * n_seq1
+rows_total_test <- rows1 * n_seq_test
+ncol1 <- length(names_x) + length(names_y) #Spalten == NCOL(train_x) == 20 Features
+ncol2 <- length(names_y)
+
+
+train_x <- keras::k_reshape(train_x, shape = c(rows_total,n_past, ncol1)) 
+train_y <- keras::k_reshape(train_y, shape = c(rows_total,ncol2)) 
+test_x <-  keras::k_reshape(test_x, shape = c(rows_total_test,n_past, ncol1)) 
+test_y <-  keras::k_reshape(test_y, shape = c(rows_total_test,ncol2)) 
+```
+
+
+#Länge des Tensors anpassen, für stateful = TRUE
+```{r}
+## train_x: shape=(909, 5, 22)
+
+# train_x <- train_x[1:900,,]
+# train_y <- train_y[1:900,]
+```
+
+# LSTM-Model initiieren:
+```{r}
+batch_size <- 8 #*100 # 50 #4
+
+lstm_model <- keras_model_sequential()
+
+lstm_model %>%
+    layer_lstm(units = 128, #64,
+               activation = "sigmoid",
+               batch_input_shape = c(batch_size, n_past, ncol1),
+               return_sequences = FALSE, #nur bei mehreren Layern TRUE. Sonst FALSE
+               stateful = F# TRUE
+    ) %>%
+    layer_dropout(rate = 0.2) %>%
+    layer_dense(units = ncol2) # 1 (eine Schicht) oder 3 (alle Schichten)
+```
+
+
+# Kompilieren:
+```{r}
+lstm_model %>%
+    compile(loss = 'mae', 
+            ##optimizer = optimizer_rmsprop(learning_rate = 0.001),
+            optimizer = 'rmsprop',
+            #optimizer = optimizer_adam(learning_rate = 0.001),
+            #optimizer = 'adam', 
+            metrics = 'accuracy')
+
+summary(lstm_model)
+```
+
+# Model trainieren:
+```{r, message=FALSE}
+earlystopping = callback_early_stopping(monitor = "loss", 
+                                        min_delta = 0.001, #da standardisierte Daten
+                                        patience = 5, 
+                                        mode = "min", 
+                                        restore_best_weights = TRUE                                            
+)
+
+lstm_model %>%          
+    fit(train_x,train_y,
+        epochs = 100,
+        batch_size = batch_size,
+        validation_split = 0.2, 
+        shuffle = FALSE, 
+        callbacks = earlystopping
+    )
+```
+
+
+# Model evaluieren:
+```{r}
+#lstm_model %>% evaluate(test_x, test_y, batch_size = batch_size)
+lstm_model %>% evaluate(train_x, train_y, batch_size = batch_size)
+```
+
+# make Predictions 
+```{r}
+#pred <- lstm_model %>% predict(test_x, batch_size = batch_size, stateful = TRUE) 
+pred <- lstm_model %>% predict(train_x, batch_size = batch_size, stateful = TRUE) 
+
+#rescale to normal nFK-values:
+sy <- matrix(s[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+my <- matrix(m[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+pred_nFK <- pred[,1:ncol2] * sy + my
+#test_y_nFK <- as.matrix(test_y) * sy + my
+test_y_nFK <- as.matrix(train_y) * sy + my  
+```
+
+# Gütemaße:
+```{r}
+rmse1 <- round(colMeans(sqrt((test_y_nFK-pred_nFK)^2)), 2)
+rmse_text <- paste0( paste0("RMSE y", 1:ncol2, ": "), rmse1, collapse = "\n")
+cat(rmse_text)
+cat("\n\n")
+lm1 <- map(1:ncol2, ~summary(lm(pred_nFK[,.x]~test_y_nFK[,.x])))
+
+
+cat(map_chr(1:ncol2, ~paste0("R2 y",.x ," = ", round(lm1[[.x]]$r.squared, 3), "\n")))
+```
+
+# Ergebnis zu Tabelle zusammenführen:
+```{r}
+labels1 <- c("00-20 cm", 
+             "20-40 cm", 
+             "40-60 cm")
+
+ergebnis_df_erstellen <- function(measured=test_y_nFK, predicted=pred_nFK, labels1=labels1
+){
+    x1 <- measured %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
+    
+    y1 <- predicted %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "predicted", names_to = "depth") %>% select(predicted)
+    result <- bind_cols(x1, y1) %>%
+        mutate(across("depth", ~factor(.,labels= labels1 ))) %>% 
+        group_by(depth) %>% 
+        mutate(x= 1:n() ,
+               diff_meas_pred = abs(measured - predicted),
+               diff_big = ifelse(diff_meas_pred > 5, predicted, NA))
+    
+    return(result)
+}
+
+result <- ergebnis_df_erstellen()
+```
+
+# Ergebnis plotten:
+```{r}
+source("Functions/plot_measured_predicted_lm.R")
+
+plot_measured_predicted_lm(linear_model = lm1, data = result)
+
+```
+
+# Plot der Test-Zeitreihen:
+```{r, eval=TRUE, warning=FALSE, fig.height=5}
+plot_zeitverlauf_meas_pred <- function(data=result, data_background = NULL){
+    library(ggnewscale)
+    
+    bg_geom <- if(!is.null(data_background)) {
+        list(geom_rect(data = data_background, show.legend = FALSE,
+                       aes(x = NULL, 
+                           xmin = min1-1, xmax = max1, 
+                           ymin = -Inf, ymax = Inf, 
+                           fill = as.factor(satz_id)), alpha = 0.5),
+             scale_fill_manual(values = rep(c("grey70", "grey90"), length.out = length(unique(df_background$satz_id))))
+             
+        )
+    } else {
+        geom_blank()
+    }
+    
+
+    l1 = 10000
+    map(seq(from=0, to=nrow(data)/length(names_y), by =l1), 
+        ~ggplot(data %>% slice(1:l1+.x),
+                aes(x=x)) +
+            bg_geom + 
+            new_scale_fill() + 
+            # geom_rect(xmin=-Inf, xmax = Inf, ymin = -Inf, ymax = 60, 
+            #           fill = "grey90", alpha = 0.2) + 
+            # geom_rect(xmin=-Inf, xmax = Inf, ymin = 100, ymax = Inf, 
+            #           fill = "grey90", alpha = 0.2) + 
+                        geom_rect(xmin=-Inf, xmax = Inf, ymin = 60, ymax = 100, 
+                      fill = "white", alpha = 0.5) + 
+            geom_line(aes(y=measured, col = "gemessen")) +
+            geom_line(aes(y=predicted, col = "modelliert"), linetype = 2) +
+            theme_bw()+
+            theme(panel.grid = element_blank()) + 
+            facet_grid(depth~.) +
+            ylab("AWC (%)") + 
+            xlab("days of observation")
+    )
+}
+plot_zeitverlauf_meas_pred()[[1]]
+```
+
+
+
+# Modell speichern:
+```{r, eval=TRUE}
+filepath_tf <- "../data/derived_data/Models_paper/X2_Model2_LSTM_experimental_data"
+# keras::save_model_tf(lstm_model, filepath = filepath_tf, overwrite = TRUE)
+```
+
+
+

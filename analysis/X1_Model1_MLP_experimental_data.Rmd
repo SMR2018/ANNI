@@ -1,0 +1,297 @@
+---
+title: "ANNI in Tensorflow"
+author: "Samantha Rubo"
+date: "2022-08-10"
+---
+
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(ggplot2)
+library(data.table)
+library(purrr)
+library(tidyr)
+```
+
+
+### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+```{r}
+#rm(list = ls())
+data0 <- data.table::fread(
+    #"../data/derived_data/input_tabelle_2020_2022_20230822_10cm_complete.csv",
+    # "../data/derived_data/input_tabelle_2020_2022_20230823_from_hydrus_complete.csv",
+    #"../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
+    "../data/derived_data/input_tabelle_2020_2022_20231113_20cm_complete_mitNA.csv",
+    sep = ";", dec = ".") %>% as_tibble() %>%
+    drop_na
+
+names_x <- c("T0020_nFK_Vortag",            # Nur MLP, nicht LSTM
+             "T2040_nFK_Vortag",            # Nur MLP, nicht LSTM
+             "T4060_nFK_Vortag",            # Nur MLP, nicht LSTM
+             "tage_seit_aussaat", 
+             "Tmean_gradC", 
+             "Tmean_th9_25_gradC", 
+             "Tmin_gradC", 
+             "Tmax_gradC", 
+             "relLuftfeuchte_mean_prozent", 
+             #"relLuftfeuchte_min_prozent", # laut Olden unwichtig
+             #"relLuftfeuchte_max_prozent", # s.o.
+             "globalstrahlung_Wh_m2", 
+             "windgeschwindigkeit_m_s", 
+             "tageslicht_h", 
+             "tageslicht_h_th9", 
+             "Tmean_gradC_sum",             # s.o.
+             "Tmean_th9_25_gradC_sum",      # s.o.
+             "globalstrahlung_Wh_m2_sum",   # s.o.
+             "niederschlag_mm_sum",         # s.o.
+             "tageslicht_h_sum",            # s.o.
+             "tageslicht_h_th9_sum",        # s.o.
+             "Ton_prozent",
+             "Schluff_prozent",
+             "Sand_prozent",
+             "C_org_prozent",
+             "ibi", 
+             "irmi",
+             "wasser_input_Vortag" ## bei LSTM Tageswert statt Vortageswert
+)
+
+names_y <- c(
+    "T0020_nFK", 
+    "T2040_nFK",
+    "T4060_nFK"
+)
+data1 <- data0 %>% select(all_of(c(names_y,names_x))) #%>%
+
+#"tage_seit_aussaat","Tmean_gradC","Tmean_th9_25_gradC","Tmin_gradC","Tmax_gradC","relLuftfeuchte_mean_prozent" , "globalstrahlung_Wh_m2","windgeschwindigkeit_m_s","tageslicht_h","tageslicht_h_th9", "ibi", "irmi", "wasser_input_Vortag"
+
+#DWD:
+# file_list <- list.files("../../DWD_database_ANNI2/data/derived_data/DWD_data/",
+#                         pattern = "alle_stationsdaten_zusammen", full.names = T)
+# 
+# data0 <- map_df(file_list, ~fread(.)) %>% as_tibble()
+```
+
+
+\
+#Variablen auswählen:
+```{r}
+# names(data1)
+# names(data1)[!names(data1) %in% names(data0)] #Diese Variablen fehlen noch bei AMBAV-DWD-Daten
+# ```
+# ```{r}
+# Greznwert_temp <- 9.1
+# 
+# data0 <- data0 %>% 
+#     filter(Tmean_gradC > 5) %>%
+#     mutate(satz_nr = rep(1:(n()/50), each = 50, length.out = n())) %>%
+#     group_by(satz_nr) %>%
+#     mutate(tage_seit_aussaat = 1:n(),
+#            Tmean_th9_25_gradC = ifelse(Tmean_gradC > 25, 25,Tmean_gradC), .after = "Tmean_gradC") %>%
+#     mutate_at("Tmean_th9_25_gradC", ~ifelse(.<Greznwert_temp,0,.)) %>%
+#     mutate(tageslicht_h_th9 = ifelse(Tmean_gradC >= Greznwert_temp, tageslicht_h, 0)) %>%
+#     mutate(tageslicht_h_th9_7d = ifelse(tage_seit_aussaat <= 7, 0, tageslicht_h_th9)) %>% 
+#     mutate(across(c("tageslicht_h", "tageslicht_h_th9","tageslicht_h_th9_7d","Tmean_gradC", "globalstrahlung_Wh_m2", "Tmean_th9_25_gradC"), ~cumsum(.), .names = "{.col}_sum")) %>%
+#     mutate(ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_7d_sum)/63.903)), 
+#            irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_7d_sum)/224.165))) %>%
+#     ungroup()%>% 
+#     filter(globalstrahlung_Wh_m2 < 10000 &  #unplausible Daten löschen
+#     globalstrahlung_Wh_m2_sum < 300000 &
+#         wasser_input_Vortag < 20
+#     ) %>%#
+#     select(all_of(names(data1)))
+# 
+# data_bodenart <- data0 %>% 
+#     slice(1:200000) %>%
+#     mutate(Ton_prozent = 46.5,
+#            Schluff_prozent = 35.5,
+#            Sand_prozent = 18,
+#            C_org_prozent = 1.3)
+# 
+# data0 <- bind_rows(data0, data_bodenart)
+```
+
+
+## Skalierungs-Daten einlesen:
+```{r}
+scaling_data <- fread("../data/derived_data/Models_paper/All_scaling_data_20231120.csv")
+
+names_all <- scaling_data$parameter
+m <- scaling_data$m
+s <- scaling_data$s
+
+names(m) <- names_all
+names(s) <- names_all
+```
+
+## DF skalieren
+```{r}
+df_scaled <- scale(data1[,c(names_y, names_x)], 
+                            center = m[c(names_y, names_x)], 
+                            scale = s[c(names_y, names_x)])
+# df_scaled_ids <- cbind(data0[,c("satz_id", "variante_H2O", "wiederholung")], 
+#                                 df_scaled)
+```
+
+
+# ANNI: 
+## Trainings- und Test-Daten einteilen:
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(df_scaled), replace = T, prob = c(.7, .3))
+
+#X definieren:
+training <- df_scaled[ind==1,names_x]
+test <- df_scaled[ind==2, names_x]
+
+#Target definieren:
+trainingtarget <- df_scaled[ind==1, names_y] 
+testtarget <- df_scaled[ind==2, names_y]
+```
+
+
+#Keras initiieren: Input-Layer und Output-Layer definieren
+#A ) Sequential Model
+```{r, eval=TRUE}
+model <- keras_model_sequential()
+
+#Modell weiter anpassen:
+#Lernrate ändern, etc.
+model %>%
+    layer_dense(units = 128, activation = 'sigmoid', input_shape = c(length(names_x))) %>%
+    layer_dropout(rate=0.1)  %>%
+    layer_dense(units = 64, activation = 'sigmoid')  %>%
+    layer_dropout(rate=0.1)  %>%
+    layer_dense(units = length(names_y))
+
+#Loss-Function beschreiben
+model %>% compile(loss = 'mse',
+                  optimizer = 'rmsprop', 
+                  metrics = c('accuracy','mae')) 
+
+```
+
+#B) Functional Model:
+```{r, eval=FALSE}
+# inputs <- layer_input(shape = c(length(names_x)))
+# 
+# # outputs compose input + dense layers
+# predictions <- inputs %>%
+#     layer_dense(units = 100, activation = 'sigmoid') %>%
+#     layer_dropout(rate=0.05)  %>%
+#     layer_dense(units = 50, activation = 'sigmoid') %>%
+#     layer_dropout(rate=0.05)  %>%
+#     layer_dense(units = length(names_y))
+# 
+# # create model
+# model <- keras_model(inputs = inputs, outputs = predictions)
+# 
+# # compile model
+# model %>% compile(
+#     optimizer = 'rmsprop',
+#     loss = 'mse',
+#     #    metrics = c('mae', 'accuracy')
+#     metrics = c('mae')
+# )
+```
+
+#Model trainieren:
+```{r, message=FALSE}
+earlystopping = callback_early_stopping(monitor = "loss", 
+                                        min_delta = 0.001, 
+                                        patience = 5, 
+                                        mode = "min", 
+                                        restore_best_weights = TRUE                                            
+)
+
+model %>%          
+    fit(training,trainingtarget, 
+        epochs = 150,
+        batch_size = 32, #2000,
+        validation_split = 0.2, 
+        callbacks = earlystopping
+    )
+```
+
+# make Predictions 
+```{r}
+model %>% evaluate(test, testtarget)
+
+pred <- model %>% predict(rbind(test, training), stateful = FALSE)
+# pred <- model %>% predict(training, stateful = FALSE) 
+
+#rescale to normal nFK-values:
+sy <- matrix(s[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+my <- matrix(m[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+pred_nFK <- pred * sy + my
+
+test_y_nFK <- as.matrix(rbind(testtarget, trainingtarget)) * sy + my
+# test_y_nFK <- as.matrix(trainingtarget) * sy + my  
+```
+
+# Gütemaße:
+```{r}
+
+lm1 <- map(1:length(names_y), ~summary(lm(pred_nFK[,.x]~test_y_nFK[,.x])))
+
+rmse1 <- map(1:length(names_y), ~round(performance::rmse(model = lm1[[.x]]), 2))
+#rmse1 <- round(colMeans(sqrt((test_y_nFK-pred_nFK)^2)), 2)
+rmse_text <- paste0( paste0("RMSE y", 1:length(names_y), ": "), rmse1, collapse = "\n")
+cat(rmse_text)
+
+cat("\n\n")
+
+cat(map_chr(1:length(names_y), ~paste0("R2 y",.x ," = ", round(lm1[[.x]]$r.squared, 3), "\n")))
+```
+
+# Ergebnis zu Tabelle zusammenführen:
+```{r}
+labels1 <- c("00-20 cm", 
+             "20-40 cm", 
+             "40-60 cm")
+
+ergebnis_df_erstellen <- function(measured=test_y_nFK, predicted=pred_nFK, labels1=labels1
+){
+    x1 <- measured %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
+    
+    y1 <- predicted %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "predicted", names_to = "depth") %>% select(predicted)
+    result1 <- bind_cols(x1, y1) %>%
+        mutate(across("depth", ~factor(.,labels= labels1 ))) %>% 
+        group_by(depth) %>% 
+        mutate(x= 1:n() ,
+               diff_meas_pred = abs(measured - predicted),
+               diff_big = ifelse(diff_meas_pred > 5, predicted, NA))
+    
+    return(result1)
+}
+
+result <- ergebnis_df_erstellen(measured=test_y_nFK, predicted=pred_nFK, labels1=labels1)
+```
+
+# Ergebnis plotten:
+```{r}
+source("Functions/plot_measured_predicted_lm.R")
+
+plot_measured_predicted_lm(linear_model = lm1, data = result)
+```
+
+
+
+
+
+#Modell speichern:
+```{r, eval=FALSE}
+#filepath_tf <- "../data/derived_data/Model2/ANNI_Tensorflow_20230824"
+filepath_tf <- "../data/derived_data/Models_paper/X1_Model1_MLP_experimental_data"
+#keras::save_model_tf(model, filepath = filepath_tf, overwrite = FALSE)
+```
+
+
+
+
+

@@ -1,0 +1,829 @@
+---
+title: "ANNI in Tensorflow: pretrained Model mit langjährigen Wetterdaten"
+author: "Samantha Rubo"
+date: "2023-05-03"
+---
+
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(ggplot2)
+library(data.table)
+library(purrr)
+```
+##16.08.2023:
+
+### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+```{r}
+rm(list = ls())
+data1 <- data.table::fread(
+    "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
+    sep = ";", dec = ".") %>% as_tibble()
+
+file_list <- list.files("../../DWD_database_ANNI2/data/derived_data/DWD_data/",
+                        pattern = "alle_stationsdaten_zusammen", full.names = T)
+data0 <- map_df(file_list, ~fread(.)) %>% as_tibble()
+
+```
+
+\
+#Variablen auswählen:
+```{r}
+names(data1)
+names(data1)[!names(data1) %in% names(data0)] #Diese Variablen fehlen noch bei AMBAV-DWD-Daten
+```
+```{r}
+# Greznwert_temp <- 9.1
+# 
+# data0 <- data0 %>% 
+#     filter(Tmean_gradC > 5) %>%
+#     mutate(satz_nr = rep(1:(n()/50), each = 50, length.out = n())) %>%
+#     group_by(satz_nr) %>%
+#     mutate(tage_seit_aussaat = 1:n(),
+#            Tmean_th9_25_gradC = ifelse(Tmean_gradC > 25, 25,Tmean_gradC), .after = "Tmean_gradC") %>%
+#     mutate_at("Tmean_th9_25_gradC", ~ifelse(.<Greznwert_temp,0,.)) %>%
+#     mutate(tageslicht_h_th9 = ifelse(Tmean_gradC >= Greznwert_temp, tageslicht_h, 0)) %>%
+#     mutate(tageslicht_h_th9_7d = ifelse(tage_seit_aussaat <= 7, 0, tageslicht_h_th9)) %>% 
+#     mutate(across(c("tageslicht_h", "tageslicht_h_th9","tageslicht_h_th9_7d","Tmean_gradC", "globalstrahlung_Wh_m2", "Tmean_th9_25_gradC"), ~cumsum(.), .names = "{.col}_sum")) %>%
+#     mutate(ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_7d_sum)/63.903)), 
+#            irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_7d_sum)/224.165))) %>%
+#     ungroup()%>%
+#     select(all_of(names(data1)))
+
+```
+
+```{r}
+Greznwert_temp <- 9.1
+
+data0 <- data0 %>% 
+    filter(Tmean_gradC > 5) %>%
+    mutate(satz_nr = rep(1:(n()/50), each = 50, length.out = n())) %>%
+    group_by(satz_nr) %>%
+    mutate(tage_seit_aussaat = 1:n(),
+           Tmean_th9_25_gradC = ifelse(Tmean_gradC > 25, 25,Tmean_gradC), .after = "Tmean_gradC") %>%
+    mutate_at("Tmean_th9_25_gradC", ~ifelse(.<Greznwert_temp,0,.)) %>%
+    mutate(tageslicht_h_th9 = ifelse(Tmean_gradC >= Greznwert_temp, tageslicht_h, 0)) %>%
+    mutate(tageslicht_h_th9_7d = ifelse(tage_seit_aussaat <= 7, 0, tageslicht_h_th9)) %>% 
+    mutate(across(c("tageslicht_h", "tageslicht_h_th9","tageslicht_h_th9_7d","Tmean_gradC", "globalstrahlung_Wh_m2", "Tmean_th9_25_gradC"), ~cumsum(.), .names = "{.col}_sum")) %>%
+    mutate(ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_7d_sum)/63.903)), 
+           irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_7d_sum)/224.165))) %>%
+    ungroup()%>% 
+    filter(globalstrahlung_Wh_m2 < 10000 &  #unplausible Daten löschen
+               globalstrahlung_Wh_m2_sum < 300000 &
+               wasser_input_Vortag < 20
+    ) %>%#
+    select(all_of(names(data1)))
+
+data_bodenart <- data0 %>% 
+    slice(1:200000) %>%
+    mutate(Ton_prozent = 46.5,
+           Schluff_prozent = 35.5,
+           Sand_prozent = 18,
+           C_org_prozent = 1.3)
+
+data0 <- bind_rows(data0, data_bodenart)
+```
+
+
+#DWD-Daten laden:
+```{r, eval=TRUE}
+# file_list <- list.files("../../DWD_database_ANNI2/data/derived_data/DWD_data/",
+#                         pattern = "alle_stationsdaten_zusammen", full.names = T)
+# data0 <- map_df(file_list, ~fread(.))
+# 
+# data0 <- data0 %>% mutate(T0020_nFK=(nFK_0010+nFK_1020)/2,
+#                           T2040_nFK=(nFK_2030+nFK_3040)/2,
+#                           T4060_nFK=(nFK_4050+nFK_5060)/2,
+#                           T0020_nFK_Vortag = (nFK_0010_Vortag+nFK_1020_Vortag)/2,
+#                           T2040_nFK_Vortag = (nFK_2030_Vortag+nFK_3040_Vortag)/2,
+#                           T4060_nFK_Vortag = (nFK_4050_Vortag+nFK_5060_Vortag)/2
+# ) %>% 
+#     select(-starts_with("nFK")) %>%
+#     select(-tageslicht_h) %>% 
+#     select(-Ton_prozent, -C_org_prozent, -Schluff_prozent, -Sand_prozent) %>%
+#     #select(-niederschlag_mm_sum) %>% #Tagesaktueller Niederschlag kann nicht berücksichtigen!
+#     mutate(across(everything(),
+#                   ~ifelse(is.na(.), mean(., na.rm = T), .))
+#     ) %>%
+#     as_tibble()
+```
+
+#DWD-Parameter filtern pro Schicht
+```{r, eval=TRUE}
+#Bei Schicht1:
+# data1 <- data0 %>%
+#     select(-T2040_nFK, -T4060_nFK) %>%
+#     select(-T4060_nFK_Vortag) %>%
+#     select(-T2040_nFK_Vortag) %>% #bei einzelnen Modellen kann sonst die BEziehung nicht einfließen
+#     select(-relLuftfeuchte_max_prozent) %>%
+#     select(T0020_nFK, all_of(names(.)))
+
+# data1 <- data0 %>%
+#     # select(-nFK_1020, -nFK_2030, -nFK_3040, -nFK_4050, -nFK_5060) %>%
+#     # select(-nFK_1020_Vortag, -nFK_3040_Vortag, -nFK_4050_Vortag, -nFK_5060_Vortag) %>%
+#     # select(-relLuftfeuchte_max_prozent) %>%
+#     # select(nFK_0010, all_of(names(.)))
+#     select(nFK_0010,
+#            Tmean_gradC,
+#            Tmin_gradC,
+#            Tmax_gradC,
+#            relLuftfeuchte_mean_prozent,
+#            relLuftfeuchte_min_prozent,
+#            globalstrahlung_Wh_m2,
+#            windgeschwindigkeit_m_s,
+#            niederschlag_mm_sum, #Tagesaktuell, später immer auf 0 setzen für Praxis
+#            wasser_input_Vortag,
+#            nFK_0010_Vortag,
+#            nFK_2030_Vortag,
+#            tage_seit_aussaat,
+#            Tmean_th9_25_gradC,
+#            ibi,
+#            irmi
+    # )
+#)#,
+# tage_seit_aussaat=0,
+# Tmean_th9_25_gradC=0,
+# ibi=0,
+# irmi=0)
+
+# #Bei Schicht 2:
+# data1 <- data0 %>%
+# #     select(-T0020_nFK, -T4060_nFK) %>%
+# #     select(-windgeschwindigkeit_m_s, -relLuftfeuchte_min_prozent, -relLuftfeuchte_max_prozent) %>%
+# #     select(T2040_nFK, all_of(names(.)))
+#     select(nFK_2030,
+#            Tmean_gradC,
+#            Tmin_gradC,
+#            Tmax_gradC,
+#            relLuftfeuchte_mean_prozent,
+#            globalstrahlung_Wh_m2,
+#            niederschlag_mm_sum,
+#            wasser_input_Vortag,
+#            nFK_0010_Vortag,
+#            nFK_2030_Vortag,
+#            nFK_5060_Vortag,
+#            tage_seit_aussaat,
+#            Tmean_th9_25_gradC,
+#            ibi,
+#            irmi,
+#            Tmean_gradC_sum,
+#            Tmean_th9_25_gradC_sum,
+#            globalstrahlung_Wh_m2_sum,
+#            tageslicht_h_sum,
+#            tageslicht_h_th9_sum
+#     )
+# 
+# #Bei Schicht 3
+ data1 <- data0 %>%
+    select(nFK_5060,
+           Tmean_gradC,
+           globalstrahlung_Wh_m2,
+           niederschlag_mm_sum,
+           wasser_input_Vortag,
+           nFK_0010_Vortag,
+           nFK_2030_Vortag,
+           nFK_5060_Vortag, ##auch oben noch bei 2040?
+           tage_seit_aussaat,
+           ibi,
+           irmi,
+           Tmean_gradC_sum,
+           tageslicht_h_sum,
+           tageslicht_h_th9_sum
+    )
+
+#     select(-T2040_nFK, -T0020_nFK) %>%
+#     select(-windgeschwindigkeit_m_s, -relLuftfeuchte_max_prozent) %>%
+#     select(T4060_nFK, all_of(names(.)))
+```
+
+### Versuchsdaten - Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+```{r}
+#rm(list = ls())
+## Versuchsdaten:
+data_versuch <- data.table::fread(
+    #"../data/derived_data/input_tabelle_2020_2022_20230523_complete.csv",
+    "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
+    #"../data/derived_data/input_tabelle_2020_2022_20230524_25cm_complete.csv",
+    #"../data/derived_data/input_tabelle_2020_2022_20230802_20cm_complete.csv",
+    sep = ";", dec = ".") %>% as_tibble()
+
+data_versuch <- data_versuch %>%
+    mutate(across(everything(),
+                  ~ifelse(is.na(.), mean(., na.rm = T), .))
+    ) %>% 
+    #Tabelle 25cm prüfen: wieso hier noch pf???:
+    select(-starts_with("bodensaug"), -starts_with("pf")) %>%
+    #nur nFK über 30% einbeziehen? Extremwerte könnten verfälschen:
+    filter(if_all(contains("nFK"), ~ .x > 30))
+
+#Reihenfolge an DWD-Daten anpassen für richtiges Einlesen in Modell
+data_versuch <- data_versuch %>%
+    select(#T0020_nFK, T2040_nFK, T4060_nFK, 
+           all_of(names(data0)), all_of(names(.)))
+
+```
+
+#Versuchsdaten filtern pro Schicht
+
+```{r}
+cat(paste(names(data_versuch)[names(data_versuch) %in% names(data1)], collapse = ",\n"))
+
+cat(paste(names(data_versuch)[!names(data_versuch) %in% names(data1)], collapse = ",\n"))
+```
+
+
+```{r}
+#für Tiefe: 0020: irrelevante Parameter löschen:
+# data_versuch1 <- data_versuch %>%
+#     select(nFK_0010,
+#            Tmean_gradC,
+#            Tmin_gradC,
+#            Tmax_gradC,
+#            relLuftfeuchte_mean_prozent,
+#            relLuftfeuchte_min_prozent,
+#            globalstrahlung_Wh_m2,
+#            windgeschwindigkeit_m_s,
+#            niederschlag_mm_sum, #Tagesaktuell, später immer auf 0 setzen für Praxis
+#            wasser_input_Vortag,
+#            nFK_0010_Vortag,
+#            nFK_2030_Vortag,
+#            tage_seit_aussaat,
+#            Tmean_th9_25_gradC,
+#            ibi,
+#            irmi
+#     )
+
+# select(-T2040_nFK, -T4060_nFK) %>% 
+# select(-Ton_prozent, -C_org_prozent, -Schluff_prozent, -Sand_prozent, 
+#        -ends_with("sum"), -Tmean_gradC, -Tmin_gradC, -tageslicht_h,
+#        -relLuftfeuchte_max_prozent, -windgeschwindigkeit_m_s)
+
+# #für Tiefe: 2040: irrelevante Parameter löschen:
+# data_versuch1 <- data_versuch %>%
+#     select(nFK_2030,
+#            Tmean_gradC,
+#            Tmin_gradC,
+#            Tmax_gradC,
+#            relLuftfeuchte_mean_prozent,
+#            globalstrahlung_Wh_m2,
+#            niederschlag_mm_sum,
+#            wasser_input_Vortag,
+#            nFK_0010_Vortag,
+#            nFK_2030_Vortag,
+#            nFK_5060_Vortag,
+#            tage_seit_aussaat,
+#            Tmean_th9_25_gradC,
+#            ibi,
+#            irmi,
+#            Tmean_gradC_sum,
+#            Tmean_th9_25_gradC_sum,
+#            globalstrahlung_Wh_m2_sum,
+#            tageslicht_h_sum,
+#            tageslicht_h_th9_sum
+#     )
+
+
+
+# data_versuch2 <- data_versuch %>%
+#     select(-T0020_nFK, -T4060_nFK) %>% 
+#     select(-globalstrahlung_Wh_m2, -globalstrahlung_Wh_m2_sum, -contains("luftfeuchte"), -tageslicht_h_th9, -niederschlag_mm_sum, -windgeschwindigkeit_m_s, -Tmax_gradC, -Tmean_th9_25_gradC)
+# 
+# 
+# #für Tiefe: 4060: irrelevante Parameter löschen:
+data_versuch1 <- data_versuch %>%
+    select(nFK_5060,
+           Tmean_gradC,
+           globalstrahlung_Wh_m2,
+           niederschlag_mm_sum,
+           wasser_input_Vortag,
+           nFK_0010_Vortag,
+           nFK_2030_Vortag,
+           nFK_5060_Vortag, ##auch oben noch bei 2040?
+           tage_seit_aussaat,
+           ibi,
+           irmi,
+           Tmean_gradC_sum,
+           tageslicht_h_sum,
+           tageslicht_h_th9_sum
+    )
+# data_versuch3 <- data_versuch %>%
+#     select(-T2040_nFK, -T0020_nFK) %>% 
+#     select(-Tmean_th9_25_gradC_sum, -Tmin_gradC, -Tmax_gradC, -contains("luftfeuchte"), -globalstrahlung_Wh_m2, -windgeschwindigkeit_m_s)
+```
+
+
+
+
+#ANNI: 
+#Matrix für Modell auf DWD-Daten:
+## DWD-Daten skalieren
+
+```{r}
+#daten_skalieren <- function(data){
+
+data_start <- data1 %>% mutate_all(as.numeric)
+data_start <- as.matrix(data_start)
+dimnames1 <- dimnames(data_start)[[2]][-1]
+dimnames(data_start) <- NULL
+set.seed(123)
+ind <- sample(2, nrow(data_start), replace = T, prob = c(.7, .3))
+
+#X definieren:
+#Ab Spalte 2
+idx_x <- 2:ncol(data_start)
+training <- data_start[ind==1,idx_x]
+test <- data_start[ind==2, idx_x]
+
+#Target definieren:
+#erste Spalte sind Y-Werte 
+trainingtarget <- data_start[ind==1, 1] 
+testtarget <- data_start[ind==2, 1]
+
+m <- colMeans(data0) 
+s <- apply(data0, 2, sd, na.rm=TRUE) 
+s <- ifelse(s == 0 | is.na(s), 1, s)
+
+
+training <- scale(training, center = m[dimnames1], scale = s[dimnames1])
+test <- scale(test, center = m[dimnames1], scale = m[dimnames1])
+
+#Später neue Daten anhand dieser Werte skalieren:
+#scaling_data <- data.frame(m=m, s=s)
+scaling_data <- data.frame(m=m, s=s, parameter = names(m))
+
+#return(
+scaled_dwd1 <- list(training=training, test=test, trainingtarget=trainingtarget, testtarget=testtarget, scaling_data=scaling_data)#)
+#}
+
+rm(data_start, ind, idx_x, training, test, trainingtarget, testtarget)
+```
+
+## Versuchs-Daten skalieren (Überschneidungen übernommen von DWD)
+```{r}
+
+data_start <- data_versuch1 %>% mutate_all(as.numeric)
+data_start <- as.matrix(data_start)
+dimnames1 <- dimnames(data_start)[[2]][-1]
+dimnames(data_start) <- NULL
+set.seed(123)
+ind <- sample(2, nrow(data_start), replace = T, prob = c(.7, .3))
+
+#X definieren:
+#Ab Spalte 2
+idx_x <- 2:ncol(data_start)
+training <- data_start[ind==1,idx_x]
+test <- data_start[ind==2, idx_x]
+
+#Target definieren:
+#erste Spalte sind Y-Werte 
+trainingtarget <- data_start[ind==1, 1] 
+testtarget <- data_start[ind==2, 1]
+
+# idx_neue_spalten <- which(!names(data_versuch1) %in% names(data1))
+# m2 <- c(m, colMeans(data_start[,idx_neue_spalten])) #erste Werte sind DWD Daten
+# s2 <- apply(data_start[,idx_neue_spalten], 2, sd, na.rm=TRUE) 
+# s2 <- ifelse(s2 == 0 | is.na(s2), 1, s2)
+# s2 <- c(s, s2) #erste Werte sind DWD Daten
+# 
+# 
+# training <- scale(training, center = m2, scale = s2)
+# test <- scale(test, center = m2, scale = s2)
+# 
+# #Später neue Daten anhand dieser Werte skalieren:
+# scaling_data <- data.frame(m=m2, s=s2)
+
+training <- scale(training, center = m[dimnames1], scale = s[dimnames1])
+test <- scale(test, center = m[dimnames1], scale = m[dimnames1])
+
+#return(
+scaled_versuchsdaten1 <- list(training=training, test=test, trainingtarget=trainingtarget, testtarget=testtarget, scaling_data=scaling_data)#)
+#}
+
+rm(data_start, ind, idx_x, training, test, trainingtarget, testtarget, m, m2, s, s2)
+```
+
+
+
+# Skalierungsfunktion
+```{r}
+#scaled_dwd1 <- daten_skalieren(data = data1)
+#scaled_versuchsdaten1 <- daten_skalieren(data = data_versuch1)
+```
+
+# Skalierungsdaten speichern
+```{r}
+#Skalierungs-Daten speichern für Skalierung neuer Input-Daten in der Anwendung
+        # file_name1 <- "../data/derived_data/scaling_data_Schicht0010cm_DWD_20230824.csv"
+        # fwrite(scaled_dwd1$scaling_data, file = file_name1)
+
+
+#file_name1 <- "../data/derived_data/scaling_data_Schicht0020cm_DWD_20230802.csv"
+# file_name1 <- "../data/derived_data/scaling_data_Schicht2040cm_20230718.csv"
+#file_name1 <- "../data/derived_data/scaling_data_Schicht4060cm_20230718.csv"
+
+
+# file_name1 <- "../data/derived_data/scaling_data_Schicht0010cm_DWD_20230824.csv"
+# file_name1 <- "../data/derived_data/scaling_data_Schicht3040cm_DWD_20230824.csv"
+# file_name1 <- "../data/derived_data/scaling_data_Schicht5060cm_DWD_20230824.csv"
+ file_name1 <- "../data/derived_data/scaling_data_alle_Daten_DWD_20230824.csv"
+stopifnot("Datei exisitert bereits!" = !file.exists(file_name1))
+fwrite(scaled_versuchsdaten1$scaling_data, file = file_name1)
+```
+
+
+#Keras initiieren: Input-Layer und Output-Layer definieren
+#A ) Sequential Model
+```{r, eval=TRUE}
+model <- keras_model_sequential()
+
+##Schicht1: passt ok: R2 = 0.87, 256/128
+model %>%
+    layer_dense(units = 256, activation = 'sigmoid',
+                input_shape = c(NULL)) %>% #Offen lassen
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 128, activation = 'sigmoid') %>%
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 1)
+
+##Schicht2: stattdessern: wie Schicht1
+# model %>%
+#     layer_dense(units = 156, activation = 'sigmoid', input_shape = c(NULL)) %>%
+#     layer_dropout(rate=0.2)  %>%
+#     layer_dense(units = 1)
+
+##Schicht3:
+# model %>%
+#     layer_dense(units = 156, activation = 'sigmoid', input_shape = c(length(idx_x))) %>%
+#     layer_dropout(rate=0.2)  %>%
+#     layer_dense(units = 1)
+```
+
+<!-- #B) Functional Model: -->
+<!-- ```{r, eval=FALSE} -->
+<!-- inputs <- layer_input(shape = c(length(idx_x))) -->
+
+<!-- predictions <- inputs %>% -->
+<!--     layer_dense(units = 256, activation = 'sigmoid') %>% -->
+<!--     layer_dropout(rate=0.2)  %>% -->
+<!--     layer_dense(units = 128, activation = 'sigmoid') %>% -->
+<!--     layer_dropout(rate=0.1)  %>% -->
+<!--     layer_dense(units = length(idx_y)) -->
+
+<!-- # create model -->
+<!-- model <- keras_model(inputs = inputs, outputs = predictions) -->
+<!-- ``` -->
+
+# Model kompilieren
+```{r, eval=TRUE}
+# compile model, loss function
+model %>% compile(
+    optimizer = optimizer_rmsprop(learning_rate = 0.01),#'rmsprop',#"Adam",#'rmsprop',
+    #optimizer = optimizer_adam(learning_rate = 0.01), #'rmsprop',#"Adam",#'rmsprop',
+    #lernrate erhöht
+    loss = 'mse',#'msle',#'mse',
+    metrics = c('mae', 'accuracy')
+)
+
+# in Python:
+# model.compile(
+# optimizer=tf.optimizers.Adam(learning_rate=0.1),
+# loss='mean_absolute_error' #squared
+# )
+# model.compile(optimizer='RMSprop',
+# loss='mse',
+# metrics=['mae'])
+```
+
+#Model trainieren:
+```{r, message=FALSE}
+earlystopping = callback_early_stopping(monitor = "loss", 
+                                        min_delta = 1,
+                                        patience = 5,
+                                        mode = "min", 
+                                        restore_best_weights = TRUE                                            
+)
+
+model %>%          
+    fit(scaled_dwd1$training, scaled_dwd1$trainingtarget,
+        shuffle = TRUE,
+        # training,trainingtarget, 
+        epochs = 100, #256,
+        batch_size = 256,#32*16,#32*32,#64, #16, 
+        validation_split = 0.2, 
+        callbacks = earlystopping
+    )
+```
+
+```{r}
+# model %>% compile(
+#     optimizer = optimizer_rmsprop(learning_rate = 0.01),#'rmsprop',#"Adam",#'rmsprop',
+#     #optimizer = optimizer_adam(learning_rate = 0.001),
+#     #lernrate erhöht
+#     loss = 'mse',
+#     metrics = c('mae', 'accuracy')
+# )
+# 
+# model %>%
+#     fit(scaled_dwd1$training, scaled_dwd1$trainingtarget,
+#         # training,trainingtarget,
+#         epochs = 100, #256,
+#         batch_size = 32*16,#64,#64, #16,
+#         validation_split = 0.2,
+#         callbacks = earlystopping
+#     )
+```
+
+#Model evaluieren:
+```{r}
+#Modell für alle Daten ausführen
+model %>% evaluate(
+    scaled_dwd1$test, scaled_dwd1$testtarget
+    #test, testtarget
+)
+pred <- model %>% predict(scaled_dwd1$test)
+paste("RMSE =", round(mean(sqrt((scaled_dwd1$testtarget-pred)^2)), 4))
+```
+
+#Ergebnis plotten:
+```{r}
+x1 <- scaled_dwd1$testtarget %>% as.data.frame() %>% 
+    tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
+
+y1 <- pred %>% as.data.frame() %>% 
+    tidyr::pivot_longer(cols = everything(), values_to = "predicted") %>% 
+    select(predicted)
+
+result <- bind_cols(x1, y1) 
+ggplot(result, aes(measured, predicted)) + 
+    geom_point(aes(col = "alle Daten"), alpha=0.05) + 
+    geom_abline(slope = 1, intercept = 0, color = "red", linetype = 2) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+
+# Gütemaß R^2:
+```{r}
+paste("Güte von ANNI in der beobachteten Schicht ist: R^2 =", 
+      round(cor(result$measured, result$predicted)^2,3)
+)
+```
+
+
+#Modell speichern:
+```{r, eval=TRUE}
+filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0010cm_20230824"
+filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht2030cm_20230824"
+filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht5060cm_20230824"
+#filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0020cm_20230718"
+#filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht2040cm_20230718"
+#filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht4060cm_20230718"
+
+#stopifnot("Datei exisitert bereits!" = !dir.exists(filepath_tf))
+keras::save_model_tf(model, filepath = filepath_tf, overwrite = FALSE)
+```
+
+```{r}
+#rstudioapi::restartSession()
+```
+
+
+
+#Gespiechertes Modell laden:
+```{r, eval=FALSE}
+# filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0020cm_20230718"
+# 
+# model <- load_model_tf(filepath_tf)
+
+``` 
+
+<!-- ```{r, eval=FALSE} -->
+<!-- # Check its architecture -->
+<!-- summary(new_model) -->
+
+<!-- # fs::dir_tree(filepath_tf) #Ordnerstruktur anzeigen lassen: -->
+
+<!-- # Anwendung des gelandeden Modells wie oben: -->
+<!-- new_model %>% evaluate(test, testtarget) -->
+<!-- pred <- new_model %>% predict(test) -->
+<!-- mean((testtarget-pred)^2) -->
+<!-- ``` -->
+
+
+
+#Weights extrahieren und auf neues erweitertes Modell legen
+```{r}
+old_input_layer = get_layer(model,index = 1)
+nn = ncol(scaled_versuchsdaten1$training)
+new_input_layer = layer_input(
+    shape=c(nn), 
+    dtype=old_input_layer$dtype,
+    name='test'
+)
+
+new_model = clone_model(model, new_input_layer)
+
+## weights müssen noch kopiert werden.
+for (i in 2:length(new_model$layers)){
+    set_weights(new_model$layers[[i]], get_weights(model$layers[[i]])) 
+}
+summary(new_model)
+```
+
+
+```{r}
+freeze_weights(new_model, from = 2, to = 4)
+# unfreeze_weights(new_model, from = )
+summary(new_model)
+```
+
+
+```{r}
+#Weights freezing: macht nur bei gleichen Input-Parametern sinn.
+# keras::pop_layer(new_model)
+# summary(new_model)
+# freeze_weights(new_model, from = 2, to = 4)
+# 
+
+# 
+# summary(new_model)
+
+# new_model %>% pop_layer() 
+# summary(new_model)
+# new_model %>%
+#     layer_dense(units = 128, activation = 'sigmoid') %>%
+#     layer_dropout(rate=0.2)  %>%
+#     layer_dense(units = 1)
+# summary(new_model)
+
+```
+
+
+... oben Daten nochmal neu einlesen für erweiterte Tabell
+
+#Falls from scratch:
+```{r}
+# new_model <- keras_model_sequential()
+# 
+# new_model %>%   
+#     layer_dense(units = 256, activation = 'sigmoid',
+#                 input_shape = c(NULL)) %>% #Offen lassen
+#     layer_dropout(rate=0.2)  %>%
+#     layer_dense(units = 128, activation = 'sigmoid') %>%
+#     layer_dropout(rate=0.2)  %>%
+#     layer_dense(units = 1)
+```
+
+
+```{r}
+earlystopping = callback_early_stopping(monitor = "loss", 
+                                        min_delta = 1,
+                                        patience = 5,
+                                        mode = "min", 
+                                        restore_best_weights = TRUE                                            
+)
+new_model %>% compile(
+    optimizer = optimizer_adam(learning_rate = 0.01),#'rmsprop',#"Adam",#'rmsprop',
+    #optimizer = optimizer_rmsprop(learning_rate = 0.001),
+    loss = 'mse',
+    metrics = c('mae', 'accuracy')
+)
+
+new_model %>%          
+    fit(scaled_versuchsdaten1$training, scaled_versuchsdaten1$trainingtarget,
+        #training,trainingtarget, 
+        epochs = 100, 
+        batch_size = 16,#64, 
+        validation_split = 0.1, 
+        callbacks = earlystopping
+    )
+```
+
+#Model evaluieren:
+```{r}
+#Modell für alle Daten ausführen
+new_model %>% evaluate(
+    scaled_versuchsdaten1$test, scaled_versuchsdaten1$testtarget
+    #test, testtarget
+)
+pred <- new_model %>% predict(scaled_versuchsdaten1$test)
+paste("RMSE =", round(mean(sqrt((scaled_versuchsdaten1$testtarget-pred)^2)), 4))
+```
+
+#Ergebnis plotten:
+```{r}
+result <- data.frame(measured = scaled_versuchsdaten1$testtarget,
+                     predicted = pred)
+
+ggplot(result, aes(measured, predicted)) + 
+    geom_point(aes(col = "alle Daten"), alpha=0.2) + 
+    geom_abline(slope = 1, intercept = 0, color = "red", linetype = 2) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+# Gütemaß R^2:
+```{r}
+paste("Güte von ANNI mit VERSUCHSDATEN in der beobachteten Schicht ist: R^2 =", 
+      round(cor(result$measured, result$predicted)^2,3)
+)
+```
+
+#adaptiertes Modell speichern:
+```{r, eval=TRUE}
+filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0020cm_mit_Versuchsdaten_20230718"
+#filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht2040cm_mit_Versuchsdaten_20230718"
+#filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht4060cm_mit_Versuchsdaten_20230718"
+
+keras::save_model_tf(new_model, filepath = filepath_tf, overwrite = TRUE)
+```
+
+#Tiefste Schicht erhält nur die DWD-Daten, da in Tiefe >40cm Pflanzen-Interaktion vernachlässigt werden kann.
+
+learning rate anpassen!
+
+```{r}
+w1 <- get_weights(model)
+w2 <- get_weights(new_model)
+plot(w1[[1]][1:11,], w2[[1]][1:11,])
+```
+
+
+```{r}
+plot(new_model)
+plot(model)
+```
+
+```{r}
+satz_raw <- fread("../data/derived_data/Wetterdaten_Praxis/Stichelpfad/daten_komplett.csv")
+satz_raw <- satz_raw %>% mutate(T0020_nFK_Vortag = NA)#, T2040_nFK_Vortag = 100)
+satz_raw$T0020_nFK_Vortag[1] <- 100
+satz_raw <- satz_raw %>% select(all_of(names(data_versuch1)[-1]))
+#satz_raw <- satz_raw %>% select(all_of(names(data1)[-1])) 
+
+#Test: Input-Parameter niederschlag_mm_sum angepasst: Tageswert
+satz_raw <- satz_raw %>%
+    mutate(niederschlag_mm_sum = c(0,diff(niederschlag_mm_sum))) 
+satz_raw
+#data.frame(x=names(data1), y=c( "yyy",names(satz_raw)))
+```
+
+
+
+## "Vortag" im Loop noch anpassen!
+
+```{r}
+scaling_data <- scaled_versuchsdaten1$scaling_data
+#scaling_data <- scaled_dwd1$scaling_data
+#satz_raw$niederschlag_mm_sum <- c(0,diff(satz_raw$niederschlag_mm_sum))
+satz_scaled <- scale(satz_raw, center = scaling_data$m, scale = scaling_data$s)
+
+predictions_anni <- matrix(ncol = 2, nrow = nrow(satz_scaled))
+nn<- c(1,2) #which(names(satz_raw) == "nFK_0010_Vortag") #ncol(satz_scaled)
+
+
+for (i in 1:(nrow(satz_scaled)-1)){
+    
+    predictions_anni[i,] <- 
+        #model %>% 
+        new_model %>%
+        predict(x = matrix(nrow = 1, satz_scaled[i,]), verbose = 0)
+    
+    satz_scaled[i+1,nn] <- scale(matrix(predictions_anni[i,1], nrow = 1),
+                                 center = scaling_data$m[1:nn],
+                                 scale = scaling_data$s[1:nn])
+    k_clear_session()
+}
+
+y2 <- predictions_anni[-NROW(predictions_anni),] %>% as.data.frame() %>%
+    mutate(tage_seit_aussaat = 
+               #1:40
+               satz_raw$tage_seit_aussaat[-1]
+    ) %>%
+    tidyr::pivot_longer(cols = -tage_seit_aussaat,
+                        values_to = "predicted_nFK",  names_to = "depth")
+
+result <- #100% nFK für Tag 1 anfügen:
+    bind_rows(data.frame(tage_seit_aussaat =  1,
+                         depth = unique(y2$depth),
+                         predicted_nFK = 100),
+              y2) %>%
+    mutate_at("depth", ~factor(., labels = c("nFK_0020"))) %>%
+    mutate_at("predicted_nFK", ~round(., 2))
+```
+
+```{r}
+ggplot() + 
+    geom_col(data = satz_raw, #%>% mutate(tage_seit_aussaat = 1:41), 
+             aes(tage_seit_aussaat-1, wasser_input_Vortag),
+             fill = "lightblue") +
+    geom_line(data = result, aes(tage_seit_aussaat, predicted_nFK)) +
+    #scale_y_continuous(limits = c(74,100)) + #niederschlag_mm_sum
+    # coord_cartesian(ylim = c(75,125), clip = "on", expand = F) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank())
+```
+# ÄNDERN:
+Vorsicht: niederschlag_mm_sum möglicherweise anders in training (==Tagesniederschlag) und in Anwendung (== summierter Niederschlag seit Aussaat)!
