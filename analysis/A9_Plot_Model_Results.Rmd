@@ -1,0 +1,341 @@
+---
+title: "Plot model results with experimental data"
+author: "Samantha Rubo"
+date: "2023-11-16"
+---
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(ggplot2)
+library(ggpubr)
+library(data.table)
+library(purrr)
+library(tidyr)
+library(broom)
+```
+
+
+## Daten einlesen
+```{r Daten einlesen}
+df_roh <- fread("../data/derived_data/input_tabelle_2020_2022_20231113_20cm_complete_mitNA.csv")
+df_filtered0 <- df_roh %>% 
+    group_by(satz_id, variante_H2O, wiederholung) %>% 
+    mutate(id_all = cur_group_id(), .before = "satz_id") %>%
+    #NA in nFK interpolieren:
+    mutate(across(ends_with("nFK"), 
+                  ~stats::approx(x = ., n = n(), rule = 2, method = "linear")$y)
+           ## Extrapolation nicht empfehlenswert:
+           #~Hmisc::approxExtrap(x = 1:n(), y=.x, xout = 1:n(), na.rm = T, 
+           #                     rule=2, method = "constant")$y)
+    ) 
+```
+
+## Skalierungs-Daten einlesen: ##VORSICHT! NEUE ZUORDNUGN
+```{r}
+scaling_data <- fread("../data/derived_data/Models_paper/All_scaling_data_20231120.csv")
+
+names_all <- scaling_data$parameter
+
+m <- scaling_data$m
+s <- scaling_data$s
+
+names(m) <- names_all
+names(s) <- names_all
+```
+
+# 1. X1: MLP Modell:
+
+
+
+```{r}
+names_x <- c("T0020_nFK_Vortag",            # Nur MLP, nicht LSTM
+             "T2040_nFK_Vortag",            # Nur MLP, nicht LSTM
+             "T4060_nFK_Vortag",            # Nur MLP, nicht LSTM
+             "tage_seit_aussaat", 
+             "Tmean_gradC", 
+             "Tmean_th9_25_gradC", 
+             "Tmin_gradC", 
+             "Tmax_gradC", 
+             "relLuftfeuchte_mean_prozent", 
+             #"relLuftfeuchte_min_prozent", # laut Olden unwichtig
+             #"relLuftfeuchte_max_prozent", # s.o.
+             "globalstrahlung_Wh_m2", 
+             "windgeschwindigkeit_m_s", 
+             "tageslicht_h", 
+             "tageslicht_h_th9", 
+             "Tmean_gradC_sum",             # s.o.
+             "Tmean_th9_25_gradC_sum",      # s.o.
+             "globalstrahlung_Wh_m2_sum",   # s.o.
+             "niederschlag_mm_sum",         # s.o.
+             "tageslicht_h_sum",            # s.o.
+             "tageslicht_h_th9_sum",        # s.o.
+             "Ton_prozent",
+             "Schluff_prozent",
+             "Sand_prozent",
+             "C_org_prozent",
+             "ibi", 
+             "irmi",
+             "wasser_input_Vortag" ## bei LSTM Tageswert statt Vortageswert
+)
+
+names_y <- c(
+    "T0020_nFK", 
+    "T2040_nFK",
+    "T4060_nFK"
+)
+data1 <- data0 %>% select(all_of(c(names_y,names_x))) #%>%
+```
+
+
+
+
+# Modell X1 laden:
+```{r}
+filepath_tf <- "../data/derived_data/Models_paper/X1_Model1_MLP_experimental_data/"
+new_model <- keras::load_model_tf(filepath = filepath_tf)
+```
+
+
+
+# X2. LSTM Modell:
+
+## Skalierungs-Daten einlesen: ##VORSICHT! NEUE ZUORDNUGN
+```{r}
+# scaling_data_lstm <- fread("../data/derived_data/Models_paper/X2_scaling_data_2023116.csv")
+# 
+# names_all <- scaling_data_lstm$parameter
+# names_x <- names_all[5:length(names_all)] ###IDX neu!
+# names_y <- names_all[2:4]  #IDX NEU!
+# 
+# m <- scaling_data_lstm$m
+# s <- scaling_data_lstm$s
+# 
+# names(m) <- names_all
+# names(s) <- names_all
+```
+
+names_x
+names_y
+
+
+#Auswahl der Daten für LSTM
+```{r}
+df_filtered <- df_filtered0 %>% select(id_all, satz_id, variante_H2O, wiederholung, 
+                                       all_of(names_y), all_of(names_x))
+
+df_filtered_scaled <- scale(df_filtered[,c(names_y, names_x)], 
+                            center = m[c(names_y, names_x)], 
+                            scale = s[c(names_y, names_x)])
+df_filtered_scaled_ids <- cbind(df_filtered[,c("id_all", "satz_id", "variante_H2O", "wiederholung")], 
+                                df_filtered_scaled)
+
+df1 <- df_filtered_scaled_ids %>% ungroup() #leicher zuzuordnen
+
+#zuordnung der id_all zur Variante:
+zuord <- df1 %>% 
+    select(id_all, satz_id, variante_H2O, wiederholung) %>% 
+    distinct() %>%
+    arrange(id_all)
+zuord
+```
+
+```{r}
+source("Functions/sequence_generator.R")
+```
+
+
+## Daten in Form des Modells bringen (alle Sätze)
+```{r}
+n_past = 7
+ncol1 = length(c(names_x,  names_y))
+ncol2 = length(names_y)
+
+# Funktion anwenden: alle Abfolgen (14 Tage Intervall) in Vor-Tage-Matrix auflösen
+new_data_sequence <- map(
+    1:max(df1[,"id_all"]),
+    ~df1[df1[,"id_all"] == .x, , drop = FALSE] %>% 
+        select(id_all, names_y, names_x) %>% as.matrix %>% 
+        to_sequence(.data = .,
+                    spalte_y = names_y, 
+                    spalte_x = c(names_y, names_x), 
+                    n_future = 1, 
+                    n_past = n_past)
+) 
+new_x <- map(new_data_sequence, ~.x[["x"]])# %>% list_c()
+new_y <- map(new_data_sequence, ~.x[["y"]])# %>% list_c()
+
+new_x2 <- map(
+    new_x, ~keras::k_reshape(., shape = c((NROW(.)/n_past),n_past, ncol1)) #c(,,24)
+) 
+
+new_y2 <-  map(new_y, 
+               ~keras::k_reshape(., shape = c((NROW(.)),ncol2)) #c(,,3)
+)
+```
+
+# Modell X2 laden:
+```{r}
+filepath_tf <- "../data/derived_data/Models_paper/X2_Model2_LSTM_experimental_data"
+new_model_lstm <- keras::load_model_tf(filepath = filepath_tf)
+```
+
+
+## Modell anwenden für eine Variante/Satz/Wiederholung
+```{r}
+batch_size = 8 #wie im Model!
+pred_all_func <- function(idx = 1){
+    #idx <- 15
+    pred <- new_model_lstm %>% predict(new_x2[[idx]], batch_size = batch_size, stateful = TRUE) 
+    
+    #rescale to normal nFK-values:
+    sy <- matrix(s[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+    my <- matrix(m[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+    pred_nFK <- pred[,1:ncol2] * sy + my
+    test_y_nFK <- as.matrix(new_y2[[idx]]) * sy + my  
+    
+    return(list(pred_nFK=pred_nFK, test_y_nFK=test_y_nFK))
+}
+
+pred_list <- map(1:length(new_x2),
+                 ~pred_all_func(idx = .x)
+)
+
+#pred_list[[6]]
+```
+
+## Variante und Plot filtern
+```{r}
+labels1 <- c("00-20 cm", 
+             "20-40 cm", 
+             "40-60 cm")
+
+ergebnis_df_erstellen <- function(measured=test_y_nFK, predicted=pred_nFK, labels1=labels1
+){
+    x1 <- measured %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
+    
+    y1 <- predicted %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "predicted", names_to = "depth") %>% select(predicted)
+    result <- bind_cols(x1, y1) %>%
+        mutate(across("depth", ~factor(.,labels= labels1 ))) #%>% 
+    # group_by(depth) %>% 
+    # mutate(#x= 1:n() ,
+    #        diff_meas_pred = abs(measured - predicted),
+    #        diff_big = ifelse(diff_meas_pred > 5, predicted, NA))
+    
+    return(result)
+}
+
+result_list <- map(1:length(pred_list),
+                   ~ergebnis_df_erstellen(measured = pred_list[[.x]]$test_y_nFK,
+                                          predicted = pred_list[[.x]]$pred_nFK, 
+                                          labels1 = labels1)
+)
+
+#result_list[[6]]
+```
+
+
+## Plotten
+```{r, warning=FALSE}
+#plot_measured_predicted_lm(data = result_list[[6]], linear_model = lm1) #einzelner Zeitreihe
+
+#Alle Zeitreihen:
+result_rbind <- bind_rows(result_list, .id = "id_all") %>%
+    group_by(depth, id_all) %>% 
+    mutate(x_wdh = (1:n() + 7),                                                                                                            id_all = as.integer(id_all)) %>% ungroup()
+
+ggplot(result_rbind,
+       aes(measured, predicted)) +
+    geom_polygon(data = data.frame(x=c(0,0,100,100,0), 
+                                   y=c(0,100,100,0,0)), 
+                 aes(x,y), fill = "lightblue", alpha = 0.3) + 
+    geom_polygon(data = data.frame(x=c(60,60,100,100,60), 
+                                   y=c(60,100,100,60,60)), 
+                 aes(x,y), fill = "lightblue", alpha = 0.5) + 
+    scattermore::geom_scattermore(pointsize = 2, alpha = 0.1) + 
+    geom_point(alpha = 0.1) +
+    geom_abline(slope = 1, intercept = 0, color = "black", linetype = 2) +
+    facet_wrap(depth~.) +
+    theme_bw() +
+    theme(panel.grid = element_blank(), 
+          aspect.ratio = 1) #+ 
+#stat_smooth(method = "lm", formula = "y~x", se = F) 
+
+```
+# Modellgüte:
+r2, rmse, AIC
+```{r}
+model_metrics1 <- result_rbind %>% group_by(depth) %>%
+    nest() %>% 
+    mutate(
+        fit = map(data, ~ lm(predicted ~ measured, data = .x)),
+        tidied = map(fit, glance), #OR: tidy #{broom}
+        rmse1 = map(fit, ModelMetrics::rmse)
+    ) %>%
+    unnest(rmse1, tidied)
+
+model_metrics1 %>% select(depth, r.squared, p.value, rmse1)
+```
+
+
+
+
+## Plot der Zeitreihen: measured und predicted
+
+```{r}
+#Erst Tabelle ins richtige Format bringen:
+
+levels_variante <- c("Wred", "Wfull", "Wfull_plus")
+
+df_plot <- df_filtered %>% select(id_all, satz_id, variante_H2O, wiederholung, ends_with("nFK")) %>%
+    pivot_longer(cols = ends_with("nFK"), 
+                 names_to = "depth", 
+                 values_to = "original")  %>% 
+    mutate((across("depth", ~factor(., labels = labels1)))) %>%
+    group_by(depth, id_all) %>% 
+    mutate(x_wdh = 1:n()) %>% #ungroup()
+    left_join(result_rbind, by = c("depth", "id_all", "x_wdh")) %>%
+    group_by(depth, variante_H2O) %>%
+    mutate(x = 1:n()) %>% ungroup() %>%
+    mutate(across("variante_H2O", ~factor(., levels = levels_variante)))
+
+```
+
+```{r, eval=TRUE, warning=FALSE, fig.height=4.5, fig.width=10}
+
+#Zeitreihen einzeln plotten, und nicht verbunden mit Linie:
+n_cols <- length(unique(df_plot$id_all)) 
+
+# Plotten:
+p_zeitreihe <- ggplot(df_plot, 
+                      aes(x=x)) +
+    geom_rect(xmin=-Inf, xmax = Inf, ymin = -Inf, ymax = 60, 
+              fill = "grey90", alpha = 0.5) + 
+    geom_rect(xmin=-Inf, xmax = Inf, ymin = 100, ymax = Inf, 
+              fill = "grey90", alpha = 0.5) + 
+    geom_line(aes(y=original, col = as.factor(id_all)), show.legend = F) + 
+    scale_color_manual(values = rep("grey30", times = n_cols)) + 
+    ggnewscale::new_scale_color() + 
+    geom_line(data = df_plot, aes(x = x, 
+                                   y=predicted, col = "modelliert"), 
+              linetype = 1, size = 0.6, alpha = 0.7) +
+    scale_color_manual("", limits = c("measured", "modelliert"), 
+                       values = c("grey30", "red"), 
+                       labels = c("measured", "LSTM predicted")) + 
+    theme_bw()+
+    theme(panel.grid = element_blank()) + 
+    facet_grid(depth~variante_H2O) +
+    ylab("AWC (%)") + 
+    xlab("days of observation")
+p_zeitreihe
+```
+
+```{r}
+#ggsave(plot = p_zeitreihe, filename = "~/Downloads/p_zeitreihe_X2.png", device = "png", width = 15, height = 7)
+```
+
