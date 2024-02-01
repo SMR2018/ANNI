@@ -1,0 +1,86 @@
+---
+title: "Daten skalieren"
+---
+
+# Pakete laden:
+```{r, message=FALSE}
+library(dplyr)
+library(purrr)
+library(data.table)
+```
+
+
+# Daten einlesen:
+```{r}
+data_roh <- data.table::fread(
+    "../data/derived_data/input_tabelle_2020_2022_20231113_20cm_complete_mitNA.csv",
+    sep = ";", dec = ".") %>% as_tibble() 
+
+data_filtered <- data_roh %>%
+    select(where(is.numeric), -satz_id) 
+```
+
+
+```{r, rows.print = 32}
+m <- colMeans(data_filtered, na.rm = TRUE)
+s <- apply(data_filtered, 2, sd, na.rm=TRUE)
+scaling_data <- data.frame(m=m, s=s, parameter = colnames(data_filtered), row.names = 1:length(m))
+
+# Für Bodentextur anpassen, da nur wenige Werte
+#s <- ifelse(s == 0, 1, s)
+idx <- which(scaling_data$parameter %in% c("Ton_prozent", "Schluff_prozent", "Sand_prozent"))
+scaling_data[idx, "m"] <- 50
+scaling_data[idx, "s"] <- 30
+
+
+#C-Org Gehalte: seperate m und s berechnen
+humus_gehalte <- c(1.7,3,1.5,1.9,2.3) #Gemessene Werte der Betriebe
+c_org <- humus_gehalte * 0.58
+c_org <- c(c_org, 1.2) #HGU
+m_c <- mean(c_org)
+s_c <- sd(c_org)
+idx2 <- which(scaling_data$parameter == "C_org_prozent")
+
+scaling_data[idx2, "m"] <- m_c
+scaling_data[idx2, "s"] <- s_c
+
+scaling_data
+```
+
+#Skalierungs-Daten speichern für Skalierung neuer Input-Daten in der Anwendung
+```{r}
+# fwrite(scaling_data, file = "../data/derived_data/Models_paper/All_scaling_data_20231120.csv")
+```
+
+
+
+
+
+
+
+
+# Skalierung anwenden:
+
+## Skalierungs-Daten einlesen:
+```{r}
+# scaling_data_lstm <- fread("../data/derived_data/Models_paper/X2_scaling_data_2023116.csv")
+# 
+# names_all <- scaling_data_lstm$parameter
+# names_x <- names_all[5:length(names_all)]
+# names_y <- names_all[2:4]
+# 
+# m <- scaling_data_lstm$m
+# s <- scaling_data_lstm$s
+# 
+# names(m) <- names_all
+# names(s) <- names_all
+```
+
+## DF skalieren
+```{r}
+# df_scaled <- scale(df[,c(names_y, names_x)],
+#                             center = m[c(names_y, names_x)],
+#                             scale = s[c(names_y, names_x)])
+# df_scaled_ids <- cbind(df[,c("id_all", "satz_id", "variante_H2O", "wiederholung")],
+#                                 df_filtered_scaled)
+```
