@@ -19,96 +19,155 @@ library(NeuralSens) #Sensitivity Analysis
 #filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht4060cm_20230718"
 #filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht4060cm_mit_Versuchsdaten_20230718"
 #filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0020cm_20230718"
-filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0020cm_mit_Versuchsdaten_20230718"
+# filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0020cm_mit_Versuchsdaten_20230718"
+
+filepath_tf <- "../data/derived_data/Models_paper/X1_Model1_MLP_experimental_data/"
 
 new_model <- load_model_tf(filepath_tf)
 # Check its architecture
 summary(new_model)
 ```
 
-
-
 # Sensitivitäts-Analyse:
 ```{r}
 model_weights <- get_weights(new_model)
-wts <- c()
+```
 
-neural_struct <- c(nrow(model_weights[[1]]))
 
-for (i in seq(2, length(model_weights), 2)) {
-    neural_struct <- c(neural_struct, dim(model_weights[[i]]))
-    lyr_wgts <- rbind(model_weights[[i]], model_weights[[i - 1]])
-    wts <- c(wts, unname(do.call(c, as.data.frame(lyr_wgts))))
+```{r}
+#Bei mehreren (3) Output-Variablen die genutzen Gewichte für (1) Output auswälen:
+mw1 <- model_weights
+mw2 <- model_weights
+mw3 <- model_weights
+
+# output_idx <- 3
+letztes <- length(model_weights)
+vorletztes <- letztes - 1
+
+mw1[[vorletztes]] <- as.matrix(mw1[[vorletztes]][,1])
+mw1[[letztes]] <- as.array(mw1[[letztes]][1])
+mw2[[vorletztes]] <- as.matrix(mw2[[vorletztes]][,2])
+mw2[[letztes]] <- as.array(mw2[[letztes]][2])
+mw3[[vorletztes]] <- as.matrix(mw3[[vorletztes]][,3])
+mw3[[letztes]] <- as.array(mw3[[letztes]][3])
+
+# model_weights[[vorletztes]] <- as.matrix(model_weights[[vorletztes]][,output_idx])
+# model_weights[[letztes]] <- as.array(model_weights[[letztes]][output_idx])
+```
+
+
+# Struktur des Modells anhand der Gewichte auslesen:
+```{r}
+wts_structure <- function(model_weights1){
+    wts <- c()
+    neural_struct <- c(nrow(model_weights1[[1]]))
+    
+    for (i in seq(2, length(model_weights1), 2)) {
+        neural_struct <- c(neural_struct, dim(model_weights1[[i]]))
+        lyr_wgts <- rbind(model_weights1[[i]], model_weights1[[i - 1]])
+        wts <- c(wts, unname(do.call(c, as.data.frame(lyr_wgts))))
+    }
+    
+    return(list(neural_struct=neural_struct, wts=wts))
 }
 
-neural_struct
+#Für alle 3 Outputs auswählen:
+idx = 1:3
+wts_struct <- map2(.x = idx, .y = list(mw1, mw2, mw3),
+                   ~wts_structure(model_weights1 = .y))
 
-#actfunc <-c("sigmoid", "sigmoid", "linear") 
+map(wts_struct, ~.x$neural_struct)
+```
+
+
+```{r}
+##c("sigmoid", "ReLU", "linear") 
 actfunc <-c("sigmoid", "sigmoid", "sigmoid", "linear") 
-#c("sigmoid", "sigmoid")
-#c("linear", "ReLU", "ReLU", "linear")
 ```
 
 
 
 training,trainingtarget aus A5_ANNI... des zugehörigen Modells
 ```{r}
-daten <- scaled_versuchsdaten1
-daten_names <- names(data_versuch1)
+colnames(training) <- NULL
+colnames(trainingtarget) <- NULL
+# trData1 = as.data.frame(cbind(
+#     training,
+#     trainingtarget[,output_idx]
+# ))
 
-# daten <- scaled_dwd1 
-# daten_names <- names(data1) 
-    
-trData1 = as.data.frame(cbind(
-    daten$training,daten$trainingtarget))[1:1000,]
+coefnames1 = names_x 
+# output_name1 = names_y[output_idx] 
 
-coefnames1 = daten_names[-1]
-
-#Fehlermeldung bei zu langen Namen. Daher hier kürzen:
-coefnames1 = gsub(x = coefnames1, pattern = "relLuftfeuchte", replacement = "RLF") %>% 
-    gsub(x = ., pattern = "prozent", replacement = "%") %>%
-    gsub(x = ., pattern = "Vortag", replacement = "d-1")# %>%
-
-output_name1 = daten_names[1]
+# #Fehlermeldung bei zu langen Namen. Daher hier kürzen:
+# coefnames1 = 
+#     gsub(x = coefnames1, pattern = "relLuftfeuchte", replacement = "RLF") %>%
+#     gsub(x = ., pattern = "prozent", replacement = "%") %>%
+#     gsub(x = ., pattern = "Vortag", replacement = "d-1") %>%
+#     gsub(x = ., pattern = "globalstrahlung", replacement = "gs") %>%
+#     gsub(x = ., pattern = "windgeschwindigkeit", replacement = "wind") %>%
+#     gsub(x = ., pattern = "tageslicht", replacement = "licht") %>%
+#     gsub(x = ., pattern = "th9_25", replacement = "th")
 ```
 
 
+#Sensitivitätsanalyse für 3 Tiefen:
 ```{r}
-sens_keras <- SensAnalysisMLP(
-    wts, 
-    trData = trData1,
-    mlpstr = neural_struct, 
-    coefnames = coefnames1,
-    output_name = output_name1,
-    actfunc = actfunc, plot = FALSE) 
+idx <- 1:3
+sens_keras <- map(idx,
+                  ~SensAnalysisMLP(
+                      wts_struct[[.x]]$wts, 
+                      trData = as.data.frame(cbind(
+                          training,
+                          trainingtarget[,.x]
+                      )),
+                      mlpstr = wts_struct[[.x]]$neural_struct, 
+                      coefnames = coefnames1,
+                      output_name = names_y[.x],
+                      actfunc = actfunc, plot = FALSE) 
+)
 #summary(sens_keras)
 ```
 
 
-```{r include=FALSE}
-p1 <- plot(sens_keras)
+```{r warning=FALSE, include=FALSE}
+p1 <- map(sens_keras, ~plot(.x))
 ```
 
-```{r, fig.width=10, dpi=300}
-p1[[1]]$layers[[5]] <- NULL
-p1[[1]] +
+```{r, fig.width=10, dpi=300, warning=FALSE, include=FALSE}
+p1[[1]][[1]]$layers[[5]] <- NULL
+p1[[1]][[1]] +
     ggrepel::geom_label_repel(aes(label =varNames, x =mean, y =std ), size = 2,
                               box.padding = unit(0.25, "lines")) +
     theme(panel.grid = element_blank())
 ```
 
-
+# Sensitivitätsplot sortiert:
 ```{r}
-p1[[2]] + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-                panel.grid = element_blank())
+p1_adapted_list <- map(
+    idx, 
+    ~p1[[.x]][[2]] + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+              axis.title.x = element_blank(),
+              panel.grid = element_blank(),
+              plot.margin = unit(c(20,10,20,10), units = "points"))
+)
+#p1_adapted_list
+```
+
+```{r, fig.width=7, fig.height=12}
+library(ggpubr)
+ggpubr::ggarrange(plotlist = p1_adapted_list, ncol = 1, 
+                  labels = c("A) 0-20 cm", "B) 20-40 cm", "C) 40-60 cm"), 
+                  hjust = 0, vjust = 1)
 ```
 
 
-```{r, warning=FALSE}
-#p1[[3]]$data <- p1[[3]]$data %>% filter(!variable %in% c("C_org_prozent","Sand_prozent","Schluff_prozent", "Ton_prozent", "tageslicht_h_sum", "tage_seit_aussaat", "Tmin_gradC"))
+```{r, warning=FALSE, include=FALSE}
+#p1[[1]][[3]]$data <- p1[[1]][[3]]$data %>% filter(!variable %in% c("C_org_prozent","Sand_prozent","Schluff_prozent", "Ton_prozent", "tageslicht_h_sum", "tage_seit_aussaat", "Tmin_gradC"))
 
-p1[[3]] + theme(legend.position = "none")
-legend3 <- ggpubr::get_legend(p1[[3]])
+p1[[1]][[3]] + theme(legend.position = "none")
+legend3 <- ggpubr::get_legend(p1[[1]][[3]])
 plot(legend3)
 ```
 
