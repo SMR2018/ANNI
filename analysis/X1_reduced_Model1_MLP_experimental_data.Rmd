@@ -48,26 +48,26 @@ names_x <- c("B0020_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
              "B4060_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
              "tage_seit_aussaat", 
              "Tmean_gradC", 
-             "Tmean_th9_25_gradC", 
-             "Tmin_gradC", 
-             "Tmax_gradC", 
+     #Sens        "Tmean_th9_25_gradC", 
+     #Sens        "Tmin_gradC", 
+     #Sens        "Tmax_gradC", 
              "relLuftfeuchte_mean_prozent", 
              #"relLuftfeuchte_min_prozent", # laut Olden unwichtig
              #"relLuftfeuchte_max_prozent", # s.o.
-             "globalstrahlung_Wh_m2", 
-             "windgeschwindigkeit_m_s", 
-             "tageslicht_h", 
-             "tageslicht_h_th9", 
+     #Sens        "globalstrahlung_Wh_m2", 
+              "windgeschwindigkeit_m_s", 
+     #Sens         "tageslicht_h", 
+     #Sens         "tageslicht_h_th9", 
              "Tmean_gradC_sum",             # s.o.
              "Tmean_th9_25_gradC_sum",      # s.o.
              "globalstrahlung_Wh_m2_sum",   # s.o.
              "niederschlag_mm_sum",         # s.o.
-             "tageslicht_h_sum",            # s.o.
+     #Sens         "tageslicht_h_sum",            # s.o.
              "tageslicht_h_th9_sum",        # s.o.
              "Ton_prozent",
-             "Schluff_prozent",
+     #Sens        "Schluff_prozent",
              "Sand_prozent",
-             "C_org_prozent",
+     #Sens      "C_org_prozent",
              "ibi", 
              "irmi",
              "wasser_input_Vortag" ## bei LSTM Tageswert statt Vortageswert
@@ -204,8 +204,8 @@ test_y_nFK <- as.matrix(rbind(testtarget, trainingtarget)) * sy + my
 # rmse_text <- paste0( paste0("RMSE y", 1:length(names_y), ": "), rmse1, collapse = "\n")
 
 ## singulär berechnet
-ncol2=3
 rmse1 <- round(colMeans(sqrt((test_y_nFK-pred_nFK)^2)), 2)
+ncol2 = 3
 rmse_text <- paste0( paste0("RMSE y", 1:ncol2, ": "), rmse1, collapse = "\n")
 
 cat(rmse_text)
@@ -249,19 +249,13 @@ plot_measured_predicted_lm(linear_model = lm1, data = result) +
 ```
 
 
-```{r}
-ggplot(result, aes(x=x)) + 
-    geom_line(aes(y=measured, col="measured")) + 
-    geom_line(aes(y=predicted, col = "predicted"), linetype = 2) + 
-    facet_grid(depth~.)
-```
 
 
 
 #Modell speichern:
 ```{r, eval=FALSE}
-filepath_tf <- "../data/derived_data/Models_paper/X1_Model1_MLP_experimental_data_BothSites"
-# keras::save_model_tf(model, filepath = filepath_tf, overwrite = TRUE)
+filepath_tf <- "../data/derived_data/Models_paper/X1_reduced_Model1_MLP_experimental_data"
+ #keras::save_model_tf(model, filepath = filepath_tf, overwrite = TRUE)
 ```
 
 

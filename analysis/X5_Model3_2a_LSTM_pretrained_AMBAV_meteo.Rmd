@@ -1,16 +1,8 @@
 ---
-title: "ANNI_LSTM"
+title: "ANNI in Tensorflow: pretrained Model LSTM mit langjährigen Wetterdaten"
+author: "Samantha Rubo"
+date: "2023-05-03"
 ---
-
-To-Do:
-/- mehrere Outputs (drei Tiefen)
-/- Impactanalyse Olden ##geht nicht für LSTM, oder?
-/ - unwichtige Parameter entfernen
-/- längere Zeitreihen testen
-/- batch size ändern
-/- mehrere Layer
-/ - weitere Parameter: dropout, optimizer adam, standardize...?
-- Beispiel: LSTM für R auf Keras/Tensorflow Website
 
 
 ```{r, message=FALSE}
@@ -20,81 +12,64 @@ library(dplyr)
 library(magrittr)
 library(neuralnet)
 library(ggplot2)
-library(ggpubr)
 library(data.table)
 library(purrr)
-library(tidyr)
 ```
 
-```{r}
-rm(list = ls())
-```
 
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
-Die Daten haben ein Intervall von 14 Tagen
-
 ```{r}
-#rm(list = ls())
-files2 <- c(
-    # alt = "../data/derived_data/input_tabelle_2020_2023_20230328_20cm_complete.csv"
-    # "../data/derived_data/input_tabelle_2020_2023_20240328_20cm_complete.csv",
-    # "../data/derived_data/input_tabelle_2020_2023_20240328_20cm_complete_DLR.csv"
-    HGU =  "../data/derived_data/input_tabelle_2020_2023_20240403_lstm_geeignet_20cm_complete.csv",
-    DLR =  "../data/derived_data/input_tabelle_2020_2023_20240403_lstm_geeignet_20cm_complete_DLR.csv"
-)
+rm(list = ls())
+## AMBAV-Daten:
+file_list <- list.files("../../DWD_database_ANNI2/data/derived_data/DWD_data/",
+                        pattern = "alle_stationsdaten_zusammen", full.names = T)
+data1 <- map_df(file_list, ~fread(.)) %>% as_tibble()
+str(data1)
 
-data0 <- map_df(files2, 
-                ~data.table::fread(.x, sep = ";", dec = "."), .id = "Ort"
-) %>% as_tibble() %>%
-    group_by(Ort, satz_id, variante_H2O, wiederholung) %>%
-    #### neu: 8.8.2024
-    # filter(variante_H2O == "Wfull") %>%
-    # filter(wiederholung == "c") %>%
-    ####
-    mutate(id_all = cur_group_id() )%>%#, .after = "id") %>%
-    # select(-id) %>%
-    ungroup() %>%
-    arrange(id_all, tage_seit_aussaat)
-
-columns_with_nFK <- grep("nFK", names(data0), value = TRUE)
-
-# Step 2: Filter rows where all 'nFK' columns have values <= 100 /// Nicht bei LSTM
-# data0 <- data0 %>%
-#     #filter(across(all_of(columns_with_nFK), ~ . <= 100)) #bei MLP
-#     mutate(across(all_of(columns_with_nFK), ~ifelse(.>150,150,.))) #Bei LSTM
-
-names(data0)
+## Parameter der exmerimental-Data-Modelle:
+data_exp <- data.table::fread(
+    "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
+    sep = ";", dec = ".") %>% as_tibble()
+#Variablen auswählen:
+params_fuer_model <- names(data_exp)
+params_fuer_model[!params_fuer_model %in% names(data1)] #Diese Variablen fehlen noch bei AMBAV-DWD-Daten
+rm(data_exp)
 
 kulturdauer = 14
 ```
 
-# X und Y Parameter benennen:
+\
+
 ```{r}
-names_x <- c("tage_seit_aussaat", 
-             "Tmean_gradC", 
-             "Tmean_th9_25_gradC", 
-             "Tmin_gradC", 
-             "Tmax_gradC", 
-             "relLuftfeuchte_mean_prozent", 
-             "relLuftfeuchte_min_prozent", 
-             "relLuftfeuchte_max_prozent", 
-             "globalstrahlung_Wh_m2", 
-             "windgeschwindigkeit_m_s", 
-             "tageslicht_h", 
-             "tageslicht_h_th9", 
-             "Tmean_gradC_sum", 
-             "Tmean_th9_25_gradC_sum", 
-             "globalstrahlung_Wh_m2_sum", 
-             "niederschlag_mm_sum", 
-             "tageslicht_h_sum", 
-             "tageslicht_h_th9_sum", 
-             "Ton_prozent",
-             "Schluff_prozent",
-             "Sand_prozent",
-             "C_org_prozent",
-             "ibi", 
-             "irmi",
-             "wasser_input"
+names_x <- c(#"B0020_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+    #"B2040_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+    #"B4060_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+    #"tage_seit_aussaat", 
+    "Tmean_gradC", 
+    "Tmean_th9_25_gradC", 
+    "Tmin_gradC", 
+    "Tmax_gradC", 
+    "relLuftfeuchte_mean_prozent", 
+    #"relLuftfeuchte_min_prozent", # laut Olden unwichtig
+    #"relLuftfeuchte_max_prozent", # s.o.
+    "globalstrahlung_Wh_m2", 
+    "windgeschwindigkeit_m_s", 
+    "tageslicht_h", 
+    "tageslicht_h_th9", 
+    # "Tmean_gradC_sum",             # s.o.
+    # "Tmean_th9_25_gradC_sum",      # s.o.
+    # "globalstrahlung_Wh_m2_sum",   # s.o.
+    # "niederschlag_mm_sum",         # s.o.
+    # "tageslicht_h_sum",            # s.o.
+    # "tageslicht_h_th9_sum",        # s.o.
+    # "Ton_prozent",
+    # "Schluff_prozent",
+    # "Sand_prozent",
+    # "C_org_prozent",
+    # "ibi", 
+    # "irmi",
+    "wasser_input"
+    # "wasser_input_Vortag" ## bei LSTM Tageswert statt Vortageswert
 )
 
 names_y <- c(
@@ -102,33 +77,89 @@ names_y <- c(
     "B2040_nFK_prozent",
     "B4060_nFK_prozent"
 )
-data1 <- data0 %>% select(all_of(c(names_y,names_x, "id_all"))) 
 
+# data1 <- data0 %>% select(all_of(c(names_y,names_x, "id_all"))) 
 ```
 
-# Parameter auswählen
 ```{r}
-data1 <- data0 %>% 
-    select(all_of(c("id_all", names_y, names_x))) %>%
-    mutate_all(as.numeric) %>% as.matrix()
+Greznwert_temp <- 9.1
+intervalle_pro_satz = 3
+n_days_satz <- intervalle_pro_satz * kulturdauer #42
+
+data1 <- 
+    data1 %>% 
+    group_by(id) %>%
+    ########## 1.  Nach id gruppieren, Zeitreihe von 50 Tagen erstellen und fehlende 
+    ##########  Meteo-Parameter durch Mittelwerte ergänzen:
+    
+    #filter(Tmean_gradC > 5) %>% ##dann keine nahtlose zeitreihe mehr
+    #filter(between(nFK_1020, 20, 110)) %>% #Wertebereich der obersten Schicht nFK definieren
+    mutate(satz_nr = rep(1:ceiling((n()/n_days_satz)), each = n_days_satz, length.out = n())) %>%
+    group_by(id, satz_nr) %>%
+  #  mutate(tage_seit_aussaat = 1:n()) %>% #select(id, satz_nr, tage_seit_aussaat) %>% slice(1:100)
+    filter(n() == n_days_satz) %>% # nur vollständige Zeitreihen filtern
+    mutate(teil_intervall = rep(1:intervalle_pro_satz, each = kulturdauer),
+           Tmean_th9_25_gradC = ifelse(Tmean_gradC > 25, 25,Tmean_gradC), .after = "Tmean_gradC") %>%
+    mutate_at("Tmean_th9_25_gradC", ~ifelse(.<Greznwert_temp,0,.)) %>%
+    mutate(tageslicht_h_th9 = ifelse(Tmean_gradC >= Greznwert_temp, tageslicht_h, 0)) %>%
+    # mutate(across(c("tageslicht_h", 
+    #                 "tageslicht_h_th9",
+    #                 "Tmean_gradC", 
+    #                 "globalstrahlung_Wh_m2", 
+    #                 "Tmean_th9_25_gradC"), 
+    #               ~cumsum(ifelse(.<0,0,.)), .names = "{.col}_sum")) %>%
+    
+    
+    #     ########## 2. IBI und IRMI ergänzen:
+    #     # ibi und irmi mit Median aus data0 füllen
+    # mutate(ibi = 3.32,
+    #        irmi = 19.36) %>%
+    
+    ########## 4. auf 20cm Schritte reduzieren (konsistent mit exp-Model)
+    mutate(B0020_nFK_prozent = nFK_1020,
+           B2040_nFK_prozent = nFK_3040,
+           B4060_nFK_prozent = nFK_5060#,
+           # B0020_nFK_prozent_Vortag = nFK_1020_Vortag, ##nur bei MLP
+           # B2040_nFK_prozent_Vortag = nFK_3040_Vortag, s.o.
+           # B4060_nFK_prozent_Vortag = nFK_5060_Vortag  s.o.
+    ) %>%
+    
+    ########## 5. LSTM: id anfügen:
+    group_by(id, satz_nr, teil_intervall) %>%
+    mutate(id_all = cur_group_id() )%>%
+    group_by(id_all) %>% 
+    
+    
+    ########## 3. unplausible Daten zur Globalstrahlung löschen: (ganzes Intervall)
+    mutate(weg = ifelse(globalstrahlung_Wh_m2 < 10000 | 
+                            # globalstrahlung_Wh_m2_sum < 300000 |
+                            wasser_input_Vortag < 20, 0,1)) %>%
+    filter(weg == 0) %>%
+    filter(n() == kulturdauer) %>%
+    
+    ########### 6. Wasser-input korrigieren.
+    group_by(id_all) %>%
+    # mutate(weg = ifelse(!is.na(wasser_input), 0,1)) %>%
+    # filter(weg == 0) %>%
+    mutate(across(wasser_input, ~ifelse(is.na(.), 0, .)) ) %>% #entweder auf 0 setzten oder ganzes Intervall entfernen
+    
+    ungroup() %>%
+    select(all_of(c(names_y,names_x, "id_all"))) 
 ```
 
 
-# Plot einiger Zeitreihen
 ```{r}
-df_plot <- data0 %>% group_by(id_all) %>% filter(id_all < 50) %>% mutate(Tage = 1:n()) 
+is.na(data1) %>% any
+# gibt es noch NAs im Wasser_input??
+which(is.na(data1$wasser_input)) %>% length()
+which(!is.na(data1$wasser_input)) %>% length()
 
-ggplot(df_plot, aes(Tage, B2040_nFK_prozent, color = as.factor(id_all))) + 
-    geom_line() + 
-    theme_bw() + 
-    theme(legend.position = "none", panel.grid = element_blank())
 ```
 
 
-
-
-#Daten skalieren
-Später neue Daten anhand dieser Werte skalieren
+#ANNI: 
+#Matrix für Modell auf DWD-Daten:
+## DWD-Daten skalieren
 
 ## Skalierungs-Daten einlesen:
 ```{r}
@@ -148,46 +179,63 @@ df_scaled <- scale(data1[,c(names_y, names_x,"id_all")],
                    center = m[c(names_y, names_x,NA)], 
                    scale = s[c(names_y, names_x,NA)])
 
-df_scaled[,"id_all"] <- data0$id_all
+df_scaled[,"id_all"] <- data1$id_all
 ```
+
+## Trainings- und Test-Daten einteilen:
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(df_scaled), replace = T, prob = c(.7, .3))
+
+#X definieren:
+training <- df_scaled[ind==1,names_x]
+test <- df_scaled[ind==2, names_x]
+
+#Target definieren:
+trainingtarget <- df_scaled[ind==1, names_y] 
+testtarget <- df_scaled[ind==2, names_y]
+```
+
+
 
 
 # Aufteilung in Trainings- und Test-Datensatz
 ```{r}
 # In Training und Test-Daten einteilen:
 
-ids <- unique(data0$id_all)
+ids <- unique(data1$id_all)
 
-## alt, bei nur HGU-Daten:
-# ind <- ceiling(length(ids) * 0.7)
-# ind_training <- ids[1:ind] 
-# ind_test <- ids[(ind+1):length(ids)]
+## Ids einteilen für gesamten AMBAV-Datensatz
+ind <- ceiling(length(ids) * 0.7)
+ind_training <- ids[1:ind]
+ind_test <- ids[(ind+1):length(ids)]
 
-#Ids nach Ort aufteilen:
-ind <- data0 %>%
-    group_by(Ort) %>% 
-    summarise(nn = length(unique(id_all)),
-              min_train = min(id_all),
-              max_train = ceiling(nn*0.7)+min_train,
-              min_test = max_train + 1,
-              max_test = max(id_all))
+#Ids nach Ort aufteilen: /// bei X2: LSTM experimental data
+# ind <- data0 %>%
+#     group_by(Ort) %>% 
+#     summarise(nn = length(unique(id_all)),
+#               min_train = min(id_all),
+#               max_train = ceiling(nn*0.7)+min_train,
+#               min_test = max_train + 1,
+#               max_test = max(id_all))
+# ind_training <- c(ind$min_train[1] : ind$max_train[1], ind$min_train[2] : ind$max_train[2])
+# ind_test <- c(ind$min_test[1] : ind$max_test[1], ind$min_test[2] : ind$max_test[2])
 
-ind_training <- c(ind$min_train[1] : ind$max_train[1], ind$min_train[2] : ind$max_train[2])
-ind_test <- c(ind$min_test[1] : ind$max_test[1], ind$min_test[2] : ind$max_test[2])
 
-
-training_df <- df_scaled[which(data0$id_all %in% ind_training),]
-test_df <- df_scaled[which(data0$id_all %in% ind_test),]
+training_df <- df_scaled[which(data1$id_all %in% ind_training),]
+test_df <- df_scaled[which(data1$id_all %in% ind_test),]
 ```
 
 ```{r}
-zuord0 <- 
-    data0 %>% 
-    select(id_all, satz_id, variante_H2O, wiederholung) %>% 
-    distinct() %>% 
-    mutate(training_test = ifelse(id_all %in% ind_training, 
-                                  "Training_df", "Test_df"))
-zuord0
+
+## Aus X2 LSTM exp.
+# zuord0 <- 
+#     data1 %>% 
+#     select(id_all, satz_id, variante_H2O, wiederholung) %>% 
+#     distinct() %>% 
+#     mutate(training_test = ifelse(id_all %in% ind_training, 
+#                                   "Training_df", "Test_df"))
+# zuord0
 ```
 
 
@@ -310,7 +358,7 @@ test_y <-  keras::k_reshape(test_y, shape = c(rows_total_test,ncol2))
 
 # LSTM-Model initiieren:
 ```{r}
-batch_size <- 16 #8 #*100 # 50 #4
+batch_size <- 32*4 #8 #*100 # 50 #4
 
 lstm_model <- keras_model_sequential()
 
@@ -424,61 +472,13 @@ result <- ergebnis_df_erstellen(measured=test_y_nFK, predicted=pred_nFK, labels1
 ```{r, warning=FALSE}
 source("Functions/plot_measured_predicted_lm.R")
 
-plot_measured_predicted_lm(linear_model = lm1, data = result) +
+plot_measured_predicted_lm(linear_model = lm1, data = result, alpha = 0.01) +
     scale_x_continuous(limits = c(0,150)) +
     scale_y_continuous(limits = c(0,150))
 ```
 
-# Plot der Test-Zeitreihen:
-```{r, eval=TRUE, warning=FALSE, fig.height=5}
-plot_zeitverlauf_meas_pred <- function(data=result, data_background = NULL){
-    library(ggnewscale)
-    
-    bg_geom <- if(!is.null(data_background)) {
-        list(geom_rect(data = data_background, show.legend = FALSE,
-                       aes(x = NULL, 
-                           xmin = min1-1, xmax = max1, 
-                           ymin = -Inf, ymax = Inf, 
-                           fill = as.factor(satz_id)), alpha = 0.5),
-             scale_fill_manual(values = rep(c("grey70", "grey90"), length.out = length(unique(df_background$satz_id))))
-             
-        )
-    } else {
-        geom_blank()
-    }
-    
-    
-    l1 = 10000
-    map(seq(from=0, to=nrow(data)/length(names_y), by =l1), 
-        ~ggplot(data %>% slice(1:l1+.x),
-                aes(x=x)) +
-            bg_geom + 
-            new_scale_fill() + 
-            # geom_rect(xmin=-Inf, xmax = Inf, ymin = -Inf, ymax = 60, 
-            #           fill = "grey90", alpha = 0.2) + 
-            # geom_rect(xmin=-Inf, xmax = Inf, ymin = 100, ymax = Inf, 
-            #           fill = "grey90", alpha = 0.2) + 
-            geom_rect(xmin=-Inf, xmax = Inf, ymin = 60, ymax = 100, 
-                      fill = "white", alpha = 0.5) + 
-            geom_line(aes(y=measured, col = "gemessen")) +
-            geom_line(aes(y=predicted, col = "modelliert"), linetype = 2) +
-            theme_bw()+
-            theme(panel.grid = element_blank()) + 
-            facet_grid(depth~.) +
-            ylab("AWC (%)") + 
-            xlab("days of observation")
-    )
-}
-plot_zeitverlauf_meas_pred()[[1]]
-```
-
-
-
 # Modell speichern:
 ```{r, eval=TRUE}
-#filepath_tf <- "../data/derived_data/Models_paper/X2_Model2_LSTM_experimental_data"
+filepath_tf <- "../data/derived_data/Models_paper/X5_Model3_2a_LSTM_pretrained_AMBAV"
 # keras::save_model_tf(lstm_model, filepath = filepath_tf, overwrite = TRUE)
 ```
-
-
-

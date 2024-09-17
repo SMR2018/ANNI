@@ -1,0 +1,337 @@
+---
+title: "ANNI in Tensorflow X4 Model MLP tuned experimental data: Grundlage ist das MLP AMBAV-Meteo Model"
+author: "Samantha Rubo"
+date: "2023-08-10"
+---
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(ggplot2)
+library(data.table)
+library(purrr)
+library(tidyr)
+```
+
+### Daten prozessieren gleich zu X1 Model  (Experimental Data, MLP)
+
+### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+```{r}
+#rm(list = ls())
+files2 <- c(
+    "../data/derived_data/input_tabelle_2020_2023_20240328_20cm_complete.csv",
+    "../data/derived_data/input_tabelle_2020_2023_20240328_20cm_complete_DLR.csv"
+    # "../data/derived_data/input_tabelle_2020_2023_20240403_lstm_geeignet_20cm_complete.csv",
+    # "../data/derived_data/input_tabelle_2020_2023_20240403_lstm_geeignet_20cm_complete_DLR.csv"
+)
+
+data0 <- map_df(files2, 
+                ~data.table::fread(.x, sep = ";", dec = ".")
+) %>% as_tibble() 
+
+columns_with_nFK <- grep("nFK", names(data0), value = TRUE)
+
+# Step 2: Filter rows where all 'nFK' columns have values <= 100
+data0 <- data0 %>% 
+    filter(across(all_of(columns_with_nFK), ~ . <= 100))
+
+names(data0)
+```
+
+
+```{r}
+names_x <- c("B0020_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+             "B2040_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+             "B4060_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+             "Tmean_gradC", 
+     #Sens        "Tmean_th9_25_gradC", 
+     #Sens        "Tmin_gradC", 
+     #Sens        "Tmax_gradC", 
+             "relLuftfeuchte_mean_prozent", 
+             #"relLuftfeuchte_min_prozent", # laut Olden unwichtig
+             #"relLuftfeuchte_max_prozent", # s.o.
+             "globalstrahlung_Wh_m2", 
+             "windgeschwindigkeit_m_s", 
+     #Sens        "tageslicht_h", 
+     #Sens        "tageslicht_h_th9", 
+             
+             
+             ### Anordnung anpassen, um Weights von Model_pretrained übertragen zu können!
+             "wasser_input_Vortag", ## bei LSTM Tageswert statt Vortageswert
+             "tage_seit_aussaat", 
+             
+             
+             "Tmean_gradC_sum",             # s.o.
+             "Tmean_th9_25_gradC_sum",      # s.o.
+             "globalstrahlung_Wh_m2_sum",   # s.o.
+             "niederschlag_mm_sum",         # s.o.
+      #Sens       "tageslicht_h_sum",            # s.o.
+             "tageslicht_h_th9_sum",        # s.o.
+             "Ton_prozent",
+      #Sens       "Schluff_prozent",
+             "Sand_prozent",
+      #Sens       "C_org_prozent",
+             "ibi", 
+             "irmi"
+)
+
+names_y <- c(
+    "B0020_nFK_prozent", 
+    "B2040_nFK_prozent",
+    "B4060_nFK_prozent"
+)
+data1 <- data0 %>% select(all_of(c(names_y,names_x))) 
+```
+
+## Skalierungs-Daten einlesen:
+```{r}
+scaling_data <- fread("../data/derived_data/Models_paper/All_scaling_data_20230328.csv")
+
+names_all <- scaling_data$parameter
+m <- scaling_data$m
+s <- scaling_data$s
+
+names(m) <- names_all
+names(s) <- names_all
+```
+
+## DF skalieren
+```{r}
+df_scaled <- scale(data1[,c(names_y, names_x)], 
+                   center = m[c(names_y, names_x)], 
+                   scale = s[c(names_y, names_x)])
+```
+
+
+# ANNI: 
+## Trainings- und Test-Daten einteilen:
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(df_scaled), replace = T, prob = c(.7, .3))
+
+#X definieren:
+training <- df_scaled[ind==1,names_x]
+test <- df_scaled[ind==2, names_x]
+
+#Target definieren:
+trainingtarget <- df_scaled[ind==1, names_y] 
+testtarget <- df_scaled[ind==2, names_y]
+```
+
+#### TRANSFER LEARNING
+
+### Gespiechertes Modell X3 METEO laden:
+```{r, eval=TRUE}
+rm(model, new_model)
+filepath_tf <- "../data/derived_data/Models_paper/X3_reduced_Model3_1a_MPL_pretrained_AMBAV_meteo/"
+model <- load_model_tf(filepath_tf)
+
+# Check its architecture
+summary(model)
+# fs::dir_tree(filepath_tf) #Ordnerstruktur anzeigen lassen:
+```
+
+# Neues Modell initiieren:
+```{r}
+## gleiche Architektur wie pretrained Model (außer Input-Layer!)
+new_model <- keras_model_sequential() %>%
+    layer_dense(units = 256, activation = 'sigmoid',
+                input_shape = c(length(names_x))) %>% #Offen lassen ###input_shape = c(NULL))
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 128, activation = 'sigmoid') %>%
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 3) ######### units = 3!!!
+
+
+earlystopping = callback_early_stopping(monitor = "loss",
+                                        min_delta = 0.001, #da auch Y skaliert ist
+                                        patience = 5,
+                                        mode = "min",
+                                        restore_best_weights = TRUE
+)
+
+new_model %>% compile(
+    #optimizer = optimizer_adam(learning_rate = 0.0001),#'rmsprop',#"Adam",#'rmsprop',
+    optimizer = optimizer_rmsprop(learning_rate = 0.0001),
+    loss = 'mse',
+    metrics = c('mae', 'accuracy')
+)
+summary(new_model)
+```
+
+
+# Gewichte des pretrained Model übertragen auf neues Modell
+```{r}
+# Load the weights of the initial model
+initial_weights <- get_weights(model) ## geht das, oder als h5 speichern?
+
+# Transfer weights to the new model, excluding the first layer (input layer)
+layers_to_transfer <- 2:length(initial_weights)
+new_model_weights <- new_model$get_weights()
+
+for (i in seq_along(layers_to_transfer)) {
+    new_model_weights[[layers_to_transfer[i]]] <- initial_weights[[layers_to_transfer[i]]]
+}
+
+new_model %>% set_weights(new_model_weights)
+```
+
+
+
+<!-- ## ALT ab hier -->
+<!-- # Weights extrahieren und auf neues erweitertes Modell legen -->
+<!-- ```{r} -->
+<!-- old_input_layer = get_layer(model,index = 1) -->
+<!-- nn = ncol(training) -->
+<!-- new_input_layer = layer_input( -->
+<!--     shape=c(nn), -->
+<!--     dtype=old_input_layer$dtype, -->
+<!--     name='test' -->
+<!-- ) -->
+
+<!-- new_model = clone_model(model, new_input_layer) -->
+
+<!-- ## weights müssen noch kopiert werden. -->
+<!-- for (i in 2:length(new_model$layers)){ -->
+<!--     set_weights(new_model$layers[[i]], get_weights(model$layers[[i]])) -->
+<!-- } -->
+<!-- summary(new_model) -->
+
+<!-- rm(model) -->
+<!-- ``` -->
+
+<!-- # Freezing... -->
+<!-- ```{r} -->
+<!-- # freeze_weights(new_model, from = 2, to = 4) -->
+<!-- # # unfreeze_weights(new_model, from = ) -->
+<!-- # summary(new_model) -->
+
+<!-- ## Freezing + pop layer -->
+
+<!-- #Weights freezing: macht nur bei gleichen Input-Parametern sinn. -->
+<!-- # keras::pop_layer(new_model) -->
+<!-- # summary(new_model) -->
+<!-- # freeze_weights(new_model, from = 2, to = 4) -->
+<!-- # summary(new_model) -->
+
+<!-- # new_model %>% -->
+<!-- #     layer_dense(units = 128, activation = 'sigmoid') %>% -->
+<!-- #     layer_dropout(rate=0.2)  %>% -->
+<!-- #     layer_dense(units = 3) -->
+<!-- # summary(new_model) -->
+
+<!-- ``` -->
+
+
+
+
+
+### Neu trainieren mit Exp Daten
+```{r}
+new_model %>%
+    fit(training, trainingtarget,
+        epochs = 250, #100,
+        batch_size = 8,#64,
+        validation_split = 0.1,
+        callbacks = earlystopping
+    )
+```
+
+learning rate anpassen!
+
+Small Learning Rate (e.g., 0.0001):
+Preferred for Fine-Tuning: A smaller learning rate is generally preferred when you're fine-tuning a pre-trained model. It ensures that the model's weights are adjusted slowly and carefully, preventing significant deviations from the learned representations that have already proven to be effective on the original dataset. This is particularly important when the new dataset is relatively small or very similar to the original dataset, as drastic changes could lead to overfitting or forgetting valuable learned features.
+Gradual Adjustments: It allows the model to make gradual adjustments, integrating the new information from the experimental data without drastically altering the effective patterns and structures learned from the previous training.
+
+
+
+# make Predictions 
+```{r}
+new_model %>% evaluate(test, testtarget)
+
+pred <- new_model %>% predict(rbind(test, training), stateful = FALSE)
+# pred <- new_model %>% predict(training, stateful = FALSE) 
+
+#rescale to normal nFK-values:
+sy <- matrix(s[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+my <- matrix(m[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+pred_nFK <- pred * sy + my
+
+test_y_nFK <- as.matrix(rbind(testtarget, trainingtarget)) * sy + my
+# test_y_nFK <- as.matrix(trainingtarget) * sy + my  
+```
+
+# Gütemaße:
+```{r}
+## package performance
+lm1 <- map(1:length(names_y), ~summary(lm(pred_nFK[,.x]~test_y_nFK[,.x])))
+# rmse1 <- map(1:length(names_y), ~round(performance::rmse(model = lm1[[.x]]), 2))
+# rmse_text <- paste0( paste0("RMSE y", 1:length(names_y), ": "), rmse1, collapse = "\n")
+
+## singulär berechnet
+rmse1 <- round(colMeans(sqrt((test_y_nFK-pred_nFK)^2)), 2)
+rmse_text <- paste0( paste0("RMSE y", 1:3, ": "), rmse1, collapse = "\n")
+
+cat(rmse_text)
+cat("\n\n")
+cat(map_chr(1:length(names_y), ~paste0("R2 y",.x ," = ", round(lm1[[.x]]$r.squared, 3), "\n")))
+```
+
+# Ergebnis zu Tabelle zusammenführen:
+```{r}
+labels1 <- c("00-20 cm", 
+             "20-40 cm", 
+             "40-60 cm")
+
+ergebnis_df_erstellen <- function(measured=test_y_nFK, predicted=pred_nFK, labels1=labels1
+){
+    x1 <- measured %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
+    
+    y1 <- predicted %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "predicted", names_to = "depth") %>% select(predicted)
+    result1 <- bind_cols(x1, y1) %>%
+        mutate(across("depth", ~factor(.,labels= labels1 ))) %>% 
+        group_by(depth) %>% 
+        mutate(x= 1:n() ,
+               diff_meas_pred = abs(measured - predicted),
+               diff_big = ifelse(diff_meas_pred > 5, predicted, NA))
+    
+    return(result1)
+}
+
+result <- ergebnis_df_erstellen(measured=test_y_nFK, predicted=pred_nFK, labels1=labels1)
+```
+
+# Ergebnis plotten:
+```{r, warning=FALSE}
+source("Functions/plot_measured_predicted_lm.R")
+
+p <- plot_measured_predicted_lm(linear_model = lm1, data = result) +
+    scale_x_continuous(limits = c(0,110)) +
+    scale_y_continuous(limits = c(0,110))
+p
+```
+```{r}
+p$layers[7:9] <- NULL
+p2 <- p + ylab("Predicted AWC (%)") + xlab("Measured AWC (%)")
+p2
+```
+
+```{r}
+#ggsave(plot = p2, filename = "~/Downloads/guete.png")
+```
+
+Tiefste Schicht erhält nur die DWD-Daten, da in Tiefe >40cm Pflanzen-Interaktion vernachlässigt werden kann.
+
+
+#adaptiertes Modell speichern:
+```{r, eval=TRUE}
+filepath_tf <- "../data/derived_data/Models_paper/X4_reduced_Model3_1b_MLP_tuned_experimental_data"
+#keras::save_model_tf(new_model, filepath = filepath_tf, overwrite = TRUE)
+```
+
+

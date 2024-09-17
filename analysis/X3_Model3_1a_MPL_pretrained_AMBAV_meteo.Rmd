@@ -1,0 +1,298 @@
+---
+title: "ANNI in Tensorflow: pretrained Model mit langjährigen Wetterdaten"
+author: "Samantha Rubo"
+date: "2023-05-03"
+---
+
+Im Gegensatz zu X3 wird ein ANN hier nur mit Wetterdaten trainiert, und nicht zusätzlich mit dummy Variablen (Median-Werte) der zusätzlichen Parameter, wie etwa VIs oder DAS.
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(ggplot2)
+library(data.table)
+library(purrr)
+```
+##16.08.2023:
+
+### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
+```{r}
+rm(list = ls())
+## AMBAV-Daten:
+file_list <- list.files("../../DWD_database_ANNI2/data/derived_data/DWD_data/",
+                        pattern = "alle_stationsdaten_zusammen", full.names = T)
+data1 <- map_df(file_list, ~fread(.)) %>% as_tibble()
+str(data1)
+
+## Parameter der exmerimental-Data-Modelle:
+data_exp <- data.table::fread(
+    "../data/derived_data/input_tabelle_2020_2022_20220808_complete.csv",
+    sep = ";", dec = ".") %>% as_tibble()
+#Variablen auswählen:
+params_fuer_model <- names(data_exp)
+params_fuer_model[!params_fuer_model %in% names(data1)] #Diese Variablen fehlen noch bei AMBAV-DWD-Daten
+rm(data_exp)
+```
+
+\
+
+```{r}
+names_x <- c("B0020_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+             "B2040_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+             "B4060_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+             #"tage_seit_aussaat", 
+             "Tmean_gradC", 
+             "Tmean_th9_25_gradC", 
+             "Tmin_gradC", 
+             "Tmax_gradC", 
+             "relLuftfeuchte_mean_prozent", 
+             #"relLuftfeuchte_min_prozent", # laut Olden unwichtig
+             #"relLuftfeuchte_max_prozent", # s.o.
+             "globalstrahlung_Wh_m2", 
+             "windgeschwindigkeit_m_s", 
+             "tageslicht_h", 
+             "tageslicht_h_th9", 
+             #"Tmean_gradC_sum",             # s.o.
+             #"Tmean_th9_25_gradC_sum",      # s.o.
+             #"globalstrahlung_Wh_m2_sum",   # s.o.
+             #"niederschlag_mm_sum",         # s.o.
+             #"tageslicht_h_sum",            # s.o.
+             #"tageslicht_h_th9_sum",        # s.o.
+             #"Ton_prozent",        # Bei AMBAV momentan nur eine Bodenart
+             #"Schluff_prozent",    # s.o.
+             #"Sand_prozent",       # s.o.
+             #"C_org_prozent",      # s.o.
+             #"ibi", 
+             #"irmi",
+             "wasser_input_Vortag" ## bei LSTM Tageswert statt Vortageswert
+)
+
+names_y <- c(
+    "B0020_nFK_prozent", 
+    "B2040_nFK_prozent",
+    "B4060_nFK_prozent"
+)
+```
+
+
+```{r}
+Greznwert_temp <- 9.1
+
+data1 <- data1 %>% 
+    group_by(id) %>%
+    ########## 1.  Nach id gruppieren, Zeitreihe von 50 Tagen erstellen und fehlende 
+    ##########  Meteo-Parameter durch Mittelwerte ergänzen:
+    
+    filter(Tmean_gradC > 5) %>% ##dann keine nahtlose zeitreihe mehr
+    filter(between(nFK_1020, 20, 110)) %>% #Wertebereich der obersten Schicht nFK definieren
+    mutate(Tmean_th9_25_gradC = ifelse(Tmean_gradC > 25, 25,Tmean_gradC), .after = "Tmean_gradC") %>%
+    mutate_at("Tmean_th9_25_gradC", ~ifelse(.<Greznwert_temp,0,.)) %>%
+    mutate(tageslicht_h_th9 = ifelse(Tmean_gradC >= Greznwert_temp, tageslicht_h, 0)) %>%
+   
+    ########## 3. unplausible Daten zur Globalstrahlung löschen:
+    filter(globalstrahlung_Wh_m2 < 10000 &  
+               wasser_input_Vortag < 20
+    ) %>%
+    
+    ########## 4. auf 20cm Schritte reduzieren (konsistent mit exp-Model)
+    mutate(B0020_nFK_prozent = nFK_1020,
+           B2040_nFK_prozent = nFK_3040,
+           B4060_nFK_prozent = nFK_5060,
+           B0020_nFK_prozent_Vortag = nFK_1020_Vortag,
+           B2040_nFK_prozent_Vortag = nFK_3040_Vortag,
+           B4060_nFK_prozent_Vortag = nFK_5060_Vortag
+    ) %>%
+    ungroup() %>%
+    select(all_of(c(names_y,names_x))) #"id"
+```
+
+
+## Plots zur Plausibilität des Datensatzes:
+```{r, eval=FALSE}
+x1 = 10000 * 2
+y1 = 10000
+df1 <- data1[(x1-y1):x1,]
+df2 <- df1 %>% mutate(xx = 1:n()) %>% tidyr::pivot_longer(cols = -xx)
+ggplot(df2, aes(xx, value)) + 
+    geom_line() +
+    facet_wrap(.~name, scales = "free_y")
+```
+
+#ANNI: 
+#Matrix für Modell auf DWD-Daten:
+## DWD-Daten skalieren
+
+## Skalierungs-Daten einlesen:
+```{r}
+scaling_data <- fread("../data/derived_data/Models_paper/All_scaling_data_20230328.csv")
+
+names_all <- scaling_data$parameter
+m <- scaling_data$m
+s <- scaling_data$s
+
+names(m) <- names_all
+names(s) <- names_all
+```
+
+## DF skalieren
+```{r}
+df_scaled <- scale(data1[,c(names_y, names_x)], 
+                   center = m[c(names_y, names_x)], 
+                   scale = s[c(names_y, names_x)])
+```
+
+## Trainings- und Test-Daten einteilen:
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(df_scaled), replace = T, prob = c(.7, .3))
+
+#X definieren:
+training <- df_scaled[ind==1,names_x]
+test <- df_scaled[ind==2, names_x]
+
+#Target definieren:
+trainingtarget <- df_scaled[ind==1, names_y] 
+testtarget <- df_scaled[ind==2, names_y]
+```
+
+
+#Keras initiieren: Input-Layer und Output-Layer definieren
+#A ) Sequential Model
+```{r, eval=TRUE}
+model <- keras_model_sequential()
+
+model %>%
+    layer_dense(units = 256, activation = 'sigmoid',
+                input_shape = c(NULL)) %>% #Offen lassen
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 128, activation = 'sigmoid') %>%
+    layer_dropout(rate=0.2)  %>%
+    layer_dense(units = 3) ######### units = 3!!!
+
+#Loss-Function beschreiben
+model %>% compile(
+    optimizer = 'rmsprop', 
+    #optimizer = optimizer_rmsprop(learning_rate = 0.01),#'rmsprop',#"Adam",#'rmsprop',
+    #optimizer = optimizer_adam(learning_rate = 0.01), #'rmsprop',#"Adam",#'rmsprop',
+    #lernrate erhöht
+    loss = 'mse',#'msle',#'mse',
+    metrics = c('mae', 'accuracy')
+)
+```
+
+
+
+#Model trainieren:
+```{r, message=FALSE}
+earlystopping = callback_early_stopping(monitor = "loss", 
+                                        min_delta = 0.001, #klein, da auch Y skaliert ist
+                                        patience = 5,
+                                        mode = "min", 
+                                        restore_best_weights = TRUE                                            
+)
+
+model %>%          
+    fit(training,trainingtarget,
+        # shuffle = TRUE, #??
+        epochs = 100, #256,
+        batch_size = 256,#32*16,#32*32,#64, #16, 
+        validation_split = 0.2, 
+        callbacks = earlystopping
+    )
+```
+
+
+# make Predictions 
+```{r}
+model %>% evaluate(test, testtarget)
+
+pred <- model %>% predict(rbind(test, training), stateful = FALSE)
+# pred <- model %>% predict(training, stateful = FALSE) 
+
+#rescale to normal nFK-values:
+sy <- matrix(s[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+my <- matrix(m[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
+
+pred_nFK <- pred * sy + my
+test_y_nFK <- as.matrix(rbind(testtarget, trainingtarget)) * sy + my
+# test_y_nFK <- as.matrix(trainingtarget) * sy + my  
+```
+
+# Gütemaße:
+```{r}
+## package performance
+lm1 <- map(1:length(names_y), ~summary(lm(pred_nFK[,.x]~test_y_nFK[,.x])))
+# rmse1 <- map(1:length(names_y), ~round(performance::rmse(model = lm1[[.x]]), 2))
+# rmse_text <- paste0( paste0("RMSE y", 1:length(names_y), ": "), rmse1, collapse = "\n")
+
+## singulär berechnet
+rmse1 <- round(colMeans(sqrt((test_y_nFK-pred_nFK)^2)), 2)
+rmse_text <- paste0( paste0("RMSE y", 1:3, ": "), rmse1, collapse = "\n")
+
+cat(rmse_text)
+cat("\n\n")
+cat(map_chr(1:length(names_y), ~paste0("R2 y",.x ," = ", round(lm1[[.x]]$r.squared, 3), "\n")))
+```
+
+# Ergebnis zu Tabelle zusammenführen:
+```{r}
+labels1 <- c("00-20 cm", 
+             "20-40 cm", 
+             "40-60 cm")
+
+ergebnis_df_erstellen <- function(measured=test_y_nFK, predicted=pred_nFK, labels1=labels1
+){
+    x1 <- measured %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "measured", names_to = "depth")
+    
+    y1 <- predicted %>% as.data.frame() %>%
+        tidyr::pivot_longer(cols = everything(), values_to = "predicted", names_to = "depth") %>% select(predicted)
+    result1 <- bind_cols(x1, y1) %>%
+        mutate(across("depth", ~factor(.,labels= labels1 ))) %>% 
+        group_by(depth) %>% 
+        mutate(x= 1:n() ,
+               diff_meas_pred = abs(measured - predicted),
+               diff_big = ifelse(diff_meas_pred > 5, predicted, NA))
+    
+    return(result1)
+}
+
+result <- ergebnis_df_erstellen(measured=test_y_nFK, predicted=pred_nFK, labels1=labels1)
+```
+
+# Ergebnis plotten:
+```{r, warning=FALSE}
+source("Functions/plot_measured_predicted_lm.R")
+
+plot_measured_predicted_lm(linear_model = lm1, data = result, alpha = 0.01) +
+    scale_x_continuous(limits = c(0,150)) +
+    scale_y_continuous(limits = c(0,150)) 
+```
+
+
+#Modell speichern:
+```{r, eval=TRUE}
+filepath_tf <- "../data/derived_data/Models_paper/X3_2_Model3_1a_MPL_pretrained_AMBAV_meteo/"
+# keras::save_model_tf(model, filepath = filepath_tf, overwrite = TRUE)
+```
+
+```{r}
+#rstudioapi::restartSession()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

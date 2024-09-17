@@ -1,17 +1,8 @@
 ---
-title: "ANNI_LSTM"
+title: "ANNI in Tensorflow X6 Model MLP pretrained2 experimental data"
+author: "Samantha Rubo"
+date: "2023-08-10"
 ---
-
-To-Do:
-/- mehrere Outputs (drei Tiefen)
-/- Impactanalyse Olden ##geht nicht für LSTM, oder?
-/ - unwichtige Parameter entfernen
-/- längere Zeitreihen testen
-/- batch size ändern
-/- mehrere Layer
-/ - weitere Parameter: dropout, optimizer adam, standardize...?
-- Beispiel: LSTM für R auf Keras/Tensorflow Website
-
 
 ```{r, message=FALSE}
 library(keras)
@@ -20,15 +11,13 @@ library(dplyr)
 library(magrittr)
 library(neuralnet)
 library(ggplot2)
-library(ggpubr)
 library(data.table)
 library(purrr)
 library(tidyr)
 ```
 
-```{r}
-rm(list = ls())
-```
+### Daten prozessieren gleich zu X2 Model (Experimental Data, LSTM)
+
 
 ### Input-Tabelle laden (aus A3_Tabelle_erstellen.RMD)
 Die Daten haben ein Intervall von 14 Tagen
@@ -47,10 +36,6 @@ data0 <- map_df(files2,
                 ~data.table::fread(.x, sep = ";", dec = "."), .id = "Ort"
 ) %>% as_tibble() %>%
     group_by(Ort, satz_id, variante_H2O, wiederholung) %>%
-    #### neu: 8.8.2024
-    # filter(variante_H2O == "Wfull") %>%
-    # filter(wiederholung == "c") %>%
-    ####
     mutate(id_all = cur_group_id() )%>%#, .after = "id") %>%
     # select(-id) %>%
     ungroup() %>%
@@ -300,75 +285,91 @@ test_y <-  keras::k_reshape(test_y, shape = c(rows_total_test,ncol2))
 ```
 
 
-#Länge des Tensors anpassen, für stateful = TRUE
-```{r}
-## train_x: shape=(909, 5, 22)
 
-# train_x <- train_x[1:900,,]
-# train_y <- train_y[1:900,]
+
+
+
+<!-- #### TRANSFER LEARNING -->
+
+<!-- ### Gespiechertes Modell X3 laden: -->
+<!-- ```{r, eval=TRUE} -->
+<!-- rm(model, new_model) -->
+<!-- filepath_tf <- "../data/derived_data/Models_paper/X5_Model3_2a_LSTM_pretrained_AMBAV/" -->
+<!-- new_model <- load_model_tf(filepath_tf) ### direkt als new_model einlesen! -->
+
+<!-- # Check its architecture -->
+<!-- summary(new_model) -->
+<!-- # fs::dir_tree(filepath_tf) #Ordnerstruktur anzeigen lassen: -->
+<!-- ``` -->
+
+<!-- # Weights extrahieren und auf neues erweitertes Modell legen -->
+<!-- ```{r} -->
+<!-- # old_input_layer = get_layer(model,index = 1) -->
+<!-- # nn = ncol(training_df) -->
+<!-- # new_input_layer = layer_input( -->
+<!-- #     shape=c(nn), -->
+<!-- #     dtype=old_input_layer$dtype, -->
+<!-- #     name='test' -->
+<!-- # ) -->
+<!-- #  -->
+<!-- # new_model = clone_model(model, new_input_layer) -->
+<!-- #  -->
+<!-- # ## weights müssen noch kopiert werden. -->
+<!-- # for (i in 2:length(new_model$layers)){ -->
+<!-- #     set_weights(new_model$layers[[i]], get_weights(model$layers[[i]])) -->
+<!-- # } -->
+<!-- # summary(new_model) -->
+<!-- #  -->
+<!-- # rm(model) -->
+<!-- ``` -->
+
+
+### Neu trainieren mit Exp Daten
+```{r}
+batch_size <- 16
 ```
 
-# LSTM-Model initiieren:
 ```{r}
-batch_size <- 16 #8 #*100 # 50 #4
-
-lstm_model <- keras_model_sequential()
-
-lstm_model %>%
-    layer_lstm(units = 128, #64,
-               activation = "sigmoid",
-               batch_input_shape = c(batch_size, n_past, ncol1),
-               return_sequences = FALSE, #nur bei mehreren Layern TRUE. Sonst FALSE
-               stateful = F# TRUE
-    ) %>%
-    layer_dropout(rate = 0.2) %>%
-    layer_dense(units = ncol2) # 1 (eine Schicht) oder 3 (alle Schichten)
-```
-
-
-# Kompilieren:
-```{r}
-lstm_model %>%
-    compile(loss = 'mae', 
-            ##optimizer = optimizer_rmsprop(learning_rate = 0.001),
-            optimizer = 'rmsprop',
-            #optimizer = optimizer_adam(learning_rate = 0.001),
-            #optimizer = 'adam', 
-            metrics = 'accuracy')
-
-summary(lstm_model)
-```
-
-# Model trainieren:
-```{r, message=FALSE}
-earlystopping = callback_early_stopping(monitor = "loss", 
-                                        min_delta = 0.001, #da standardisierte Daten
-                                        patience = 5, 
-                                        mode = "min", 
-                                        restore_best_weights = TRUE                                            
+earlystopping = callback_early_stopping(monitor = "loss",
+                                        min_delta = 0.001, #da auch Y skaliert ist
+                                        patience = 5,
+                                        mode = "min",
+                                        restore_best_weights = TRUE
+)
+new_model %>% compile(
+    #optimizer = optimizer_adam(learning_rate = 0.0001),#'rmsprop',#"Adam",#'rmsprop',
+    optimizer = optimizer_rmsprop(learning_rate = 0.0001),
+    loss = 'mse',
+    metrics = c('mae', 'accuracy')
 )
 
-lstm_model %>%          
+new_model %>%
     fit(train_x,train_y,
         epochs = 100,
         batch_size = batch_size,
-        validation_split = 0.2, 
+        validation_split = 0.1,
         shuffle = FALSE, 
         callbacks = earlystopping
     )
 ```
 
+learning rate anpassen!
+
+Small Learning Rate (e.g., 0.0001):
+Preferred for Fine-Tuning: A smaller learning rate is generally preferred when you're fine-tuning a pre-trained model. It ensures that the model's weights are adjusted slowly and carefully, preventing significant deviations from the learned representations that have already proven to be effective on the original dataset. This is particularly important when the new dataset is relatively small or very similar to the original dataset, as drastic changes could lead to overfitting or forgetting valuable learned features.
+Gradual Adjustments: It allows the model to make gradual adjustments, integrating the new information from the experimental data without drastically altering the effective patterns and structures learned from the previous training.
+
 
 # Model evaluieren:
 ```{r}
 #lstm_model %>% evaluate(test_x, test_y, batch_size = batch_size)
-lstm_model %>% evaluate(train_x, train_y, batch_size = batch_size)
+new_model %>% evaluate(train_x, train_y, batch_size = batch_size)
 ```
 
 # make Predictions 
 ```{r}
-#pred <- lstm_model %>% predict(test_x, batch_size = batch_size, stateful = TRUE) 
-pred <- lstm_model %>% predict(train_x, batch_size = batch_size, stateful = TRUE) 
+#pred <- new_model %>% predict(test_x, batch_size = batch_size, stateful = TRUE) 
+pred <- new_model %>% predict(train_x, batch_size = batch_size, stateful = TRUE) 
 
 #rescale to normal nFK-values:
 sy <- matrix(s[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T)
@@ -429,56 +430,10 @@ plot_measured_predicted_lm(linear_model = lm1, data = result) +
     scale_y_continuous(limits = c(0,150))
 ```
 
-# Plot der Test-Zeitreihen:
-```{r, eval=TRUE, warning=FALSE, fig.height=5}
-plot_zeitverlauf_meas_pred <- function(data=result, data_background = NULL){
-    library(ggnewscale)
-    
-    bg_geom <- if(!is.null(data_background)) {
-        list(geom_rect(data = data_background, show.legend = FALSE,
-                       aes(x = NULL, 
-                           xmin = min1-1, xmax = max1, 
-                           ymin = -Inf, ymax = Inf, 
-                           fill = as.factor(satz_id)), alpha = 0.5),
-             scale_fill_manual(values = rep(c("grey70", "grey90"), length.out = length(unique(df_background$satz_id))))
-             
-        )
-    } else {
-        geom_blank()
-    }
-    
-    
-    l1 = 10000
-    map(seq(from=0, to=nrow(data)/length(names_y), by =l1), 
-        ~ggplot(data %>% slice(1:l1+.x),
-                aes(x=x)) +
-            bg_geom + 
-            new_scale_fill() + 
-            # geom_rect(xmin=-Inf, xmax = Inf, ymin = -Inf, ymax = 60, 
-            #           fill = "grey90", alpha = 0.2) + 
-            # geom_rect(xmin=-Inf, xmax = Inf, ymin = 100, ymax = Inf, 
-            #           fill = "grey90", alpha = 0.2) + 
-            geom_rect(xmin=-Inf, xmax = Inf, ymin = 60, ymax = 100, 
-                      fill = "white", alpha = 0.5) + 
-            geom_line(aes(y=measured, col = "gemessen")) +
-            geom_line(aes(y=predicted, col = "modelliert"), linetype = 2) +
-            theme_bw()+
-            theme(panel.grid = element_blank()) + 
-            facet_grid(depth~.) +
-            ylab("AWC (%)") + 
-            xlab("days of observation")
-    )
-}
-plot_zeitverlauf_meas_pred()[[1]]
-```
-
-
-
-# Modell speichern:
+#adaptiertes Modell speichern:
 ```{r, eval=TRUE}
-#filepath_tf <- "../data/derived_data/Models_paper/X2_Model2_LSTM_experimental_data"
-# keras::save_model_tf(lstm_model, filepath = filepath_tf, overwrite = TRUE)
+filepath_tf <- "../data/derived_data/Models_paper/X6_Model3_2b_LSTM_pretrained2_experimental_data/"
+# keras::save_model_tf(new_model, filepath = filepath_tf, overwrite = TRUE)
 ```
-
 
 
