@@ -1,0 +1,501 @@
+---
+title: "1. Bodensaugspannung in nutzbare Feldkapazität (nFK) umwandeln"
+author: "Samantha Rubo"
+date: '2021-12-08'
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setoptions, echo = FALSE, include=FALSE}
+knitr::opts_chunk$set(warnings=FALSE, message = FALSE, cache=TRUE)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(DBI)
+library(data.table)
+library(dtplyr)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ggnewscale)
+library(tidyr)
+```
+
+
+### Tensiometer-Daten, Wetter und Bewasserung aus SQLite-Datenbank lesen.
+```{r}
+# Verbindung zur Datenbanl herstellen:
+path0 <- "GeoSenSys2020/Data_2020/Database_Protokolle/Database_CSV_Tabellen_HGU/HGU_GeoSenSys_V3_6.db"
+# Verbindung zur Datenbanl herstellen:
+path1 <- ifelse(Sys.info()["user"] == "samantha_machgu",
+                "~/Documents/Mac_Github/", 
+                "../../"
+)
+db <- paste0(path1, path0) # DB in other R-Project
+db1 <- dbConnect(RSQLite::SQLite(), db)
+
+
+# Query fuer Tensiometer-Datensatz
+query <- "SELECT
+        Spinat_Saetze.satz_id,
+      --  Varianten.variante_acronym,
+        Varianten.variante_H2O,
+        Parzellen.wiederholung,
+        Tensiometer.zeit_messung,
+        
+        julianday(date(datetime(Tensiometer.zeit_messung, 'unixepoch'))) - julianday(date('1970-01-01', Spinat_Saetze.datum_aussaat || ' days')) AS tage_seit_aussaat,
+
+        Tensiometer.B0020_nFK_prozent,
+        Tensiometer.B2040_nFK_prozent,
+        Tensiometer.B4060_nFK_prozent
+
+        FROM Tensiometer
+        LEFT JOIN Parzellen ON Tensiometer.parzelle_id = Parzellen.parzelle_id
+        LEFT JOIN Varianten ON Parzellen.variante_id = Varianten.variante_id
+        LEFT JOIN Spinat_Saetze ON Varianten.satz_id = Spinat_Saetze.satz_id
+        WHERE Varianten.variante_N = 'N100'
+        ;" #zunächst nur fuer Stickstoff-vollversorgte Varianten
+tensio <- dbGetQuery(db1, query)
+
+#### Query fuer Wetter-Daten:
+query2 <- "SELECT
+        Wetter.satz_id,
+        Wetter.datum_wetter,
+        Wetter.datum_wetter - Spinat_Saetze.datum_aussaat AS tage_seit_aussaat,
+        Wetter.niederschlag_mm
+        FROM
+        Wetter
+        LEFT JOIN Spinat_Saetze ON Wetter.satz_id = Spinat_Saetze.satz_id"
+
+wetter <- dbGetQuery(db1, query2) %>% # Niederschlag aller Saetze einlesen
+    mutate_at("datum_wetter", ~ as_date(.))
+
+## Wetter für Save:
+query2a  <- "SELECT *  FROM Wetter;"
+wetter2 <- dbGetQuery(db1, query2a) %>% # Niederschlag aller Saetze einlesen
+    mutate_at("datum_wetter", ~data.table::as.IDate(.)) %>%
+    mutate_at("datum_wetter", ~as_date(.)) %>%
+    arrange(wetter_id)
+
+
+# Query fuer Bewaesserungs-Datensatz
+query3 <- "SELECT
+        Spinat_Saetze.satz_id,
+       -- Varianten.variante_acronym,
+        Varianten.variante_H2O,
+        Parzellen.wiederholung,
+        Bewaesserung.datum_bewaesserung,
+        Bewaesserung.wassermengen_mm
+
+        FROM Bewaesserung
+        LEFT JOIN Parzellen ON Bewaesserung.parzelle_id = Parzellen.parzelle_id
+        LEFT JOIN Varianten ON Parzellen.variante_id = Varianten.variante_id
+        LEFT JOIN Spinat_Saetze ON Varianten.satz_id = Spinat_Saetze.satz_id
+        WHERE Varianten.variante_N = 'N100' --AND Spinat_Saetze.satz_id = 5
+        "
+bewaesserung <- dbGetQuery(db1, query3) %>% # Bewaesserung aller Saetze einlesen
+    mutate_at("datum_bewaesserung", ~ as_date(.)) %>%
+    rename(bewaesserung_mm = wassermengen_mm)
+
+
+##Für Plot
+query4  <- "SELECT
+            satz_id,
+            datum_aussaat,
+            datum_ernte
+            FROM 
+            Spinat_Saetze"
+saetze_ausaat <- dbGetQuery(db1, query4)
+saetze_ausaat <- saetze_ausaat %>% 
+    mutate(across(starts_with("datum"), ~as_date(.)))
+
+dbDisconnect(db1) # Verbindung zur Datenbank beenden
+rm(db, db1, path1, query, query2, query3) # Helfer-Objekte loeschen
+```
+
+### Daten formatieren und Tagesmittelwerte der Bodensaugspannung berechnen
+```{r}
+tensio <- tensio %>%
+    # Datum formatieren und Tagesmittelwerte bilden
+    mutate_at("zeit_messung", ~ as_datetime(.) %>%
+                  format.Date(., format = "%Y-%m-%d") %>% # für Tages-Mittelwert
+                  as_date(.)) %>% # wieder in Datum (class) umformen
+    # Faktorstufen sortieren (für Grafik)
+    mutate_at("variante_H2O", ~ factor(., levels = c("Wfull_plus", "Wfull", "Wred"))) %>%
+    group_by(satz_id, variante_H2O, wiederholung, zeit_messung, tage_seit_aussaat) %>%
+    summarise(across(c(starts_with("bodensaugspannung"), ends_with("nFK_prozent")), 
+                     ~ round(mean(., na.rm = TRUE), digits = 2)), .groups = "drop")
+```
+
+
+#Tensio-Daten: Zeit am Ende entfernen, falls länger erfasst, als letzter Tag der Messtraße
+```{r}
+# tensio_datum_minmax <- tensio %>% 
+#     group_by(satz_id) %>% 
+#     reframe(tensio_start = min(zeit_messung), tensio_ende=max(zeit_messung))
+# tensio_datum_minmax
+# 
+# saetze_ausaat %>% left_join(tensio_datum_minmax, by = "satz_id") %>%
+#     mutate(diff_aussaat = tensio_start - datum_aussaat,
+#            diff_ende = tensio_ende - datum_ernte)
+
+tensio <- tensio %>% left_join(saetze_ausaat, by = "satz_id") %>%
+    filter(zeit_messung < datum_ernte) %>%
+    select(-datum_aussaat, -datum_ernte)
+```
+
+#DF speichern für A3_1 Tabelle erstellen:
+```{r}
+tensio_save <- tensio %>%
+    #select(satz_id, variante_H2O, wiederholung, zeit_messung) %>%
+    left_join(wetter2, by = c("satz_id", "zeit_messung" = "datum_wetter")) %>%
+    left_join(bewaesserung, by = c("satz_id", "variante_H2O","wiederholung",
+                                   "zeit_messung" = "datum_bewaesserung"
+    )) %>% 
+    mutate(across("bewaesserung_mm", ~ifelse(is.na(.), 0,.))) %>%
+    select(-wetter_id)
+
+#names(tensio_save)
+file1 <- paste0("../data/derived_data/A1a_tabelle_", 
+                format.Date(Sys.Date(), "%Y%m%d"), 
+                ".csv")
+file1
+##fwrite(x = tensio_save, file = file1)
+```
+
+### Tabelle formatieren für ggplot
+```{r}
+tensio_melted <- tidyr::pivot_longer(tensio,
+                                     cols = contains("nFK"),
+                                     names_to = "Bodentiefe",
+                                     values_to = "nFK_prozent"
+) %>%
+    mutate(Bodentiefe = substr(Bodentiefe, 4,5) %>% as.numeric()) %>%
+    mutate(kategorie = factor("nFK", levels = c("wasserinput", "nFK")))
+```
+
+
+### Wetter- und Bewässerungsdaten formatieren und zusammenführen
+```{r}
+# Bewaesserung und Niederschlag in eine Tabelle zusammenfuehren
+wasser_gesamt <- tensio %>%
+    select(satz_id, variante_H2O, wiederholung, zeit_messung) %>%
+    left_join(wetter, by = c("satz_id","zeit_messung" = "datum_wetter")) %>%
+    left_join(bewaesserung, by = c("satz_id", "variante_H2O","wiederholung",
+                                   "zeit_messung" = "datum_bewaesserung"
+    )) %>%
+    # Faktorstufen sortieren (für Grafik)
+    tidyr::pivot_longer(
+        cols = c("bewaesserung_mm", "niederschlag_mm"),
+        names_to = "variable", values_to = "value"
+    ) %>%
+    mutate(kategorie = factor("wasserinput", levels = c("wasserinput", "nFK"))) %>%
+    mutate_at("variante_H2O", ~ factor(., levels = c("Wfull_plus", "Wfull", "Wred")))
+
+
+#stacked values anfuegen fuer plot:
+stacked_bars_plot <- function(data, gruppen){
+    data %>% 
+        group_by_at(vars(gruppen)) %>%
+        mutate_at("value", ~ifelse(is.na(.), 0, .)) %>% 
+        mutate(value_stacked = cumsum(value)) %>% 
+        mutate(value_min = ifelse(variable == "bewaesserung_mm", 0, value[1])) %>% 
+        mutate_at(c("value_stacked", "value_min"),~ifelse( value == 0, NA, .)) %>%
+        ungroup()
+}
+
+wasser_gesamt <- stacked_bars_plot(
+    data = wasser_gesamt, 
+    gruppen = c("kategorie", "satz_id", "variante_H2O",
+                "wiederholung", "zeit_messung", "tage_seit_aussaat")
+)
+```
+
+#Standardabweichung der Wiederholung
+###Daten
+```{r}
+tensio_sd <- tensio_melted %>% 
+    pivot_wider(id_cols = c("kategorie", 
+                            "satz_id", "variante_H2O",##
+                            "zeit_messung", "tage_seit_aussaat", "Bodentiefe"), 
+                names_from = "wiederholung", values_from = "nFK_prozent") %>%
+    rowwise() %>%
+    mutate(nfK_sd = sd(c(a,b,c,d), na.rm = TRUE)) %>% 
+    select(-a, -b, -c, -d) %>%
+    ungroup
+
+wasser_gesamt_sd <- wasser_gesamt %>% 
+    filter(variable != "niederschlag_mm")  %>% 
+    #niederschlag_mm ausschließen, da alle Wiederholungen gleich.
+    pivot_wider(id_cols = c("kategorie",
+                            "satz_id", "variante_H2O", ##
+                            "variable", "zeit_messung", "tage_seit_aussaat"), 
+                names_from = "wiederholung", values_from = "value") %>%
+    rowwise() %>%
+    mutate(wasser_sd = sd(c(a,b,c,d), na.rm = TRUE)) %>% 
+    mutate_at("wasser_sd", ~ifelse(.==0, NA,.)) %>%
+    select(-a, -b, -c, -d) %>%
+    ungroup
+```
+
+
+
+
+
+#Funktionen für nFK-Plot aus Skript sourcen:
+```{r}
+source("../scripts/nfk_plot_functions.R")
+#plot_nfk
+```
+
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE}
+#Beispiel:
+#px <- 
+plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE, grafik = NULL) #grafik = "smooth")
+plot_nfk(satz_nr = 5, subtitle = "2021, Satz 1, Feld 6, Variante 'Wred'", 
+         wdh = TRUE, variante = "Wred", grafik = "smooth")
+
+#ggsave(filename = "../graphics/X20cm_Schritte/nFK_2022_Satz1.png", plot = px, device = "png", width = 10, height = 6, dpi = 300)
+```
+
+
+
+#Plot-Funktion ausfuehren
+```{r}
+#c("smooth", NULL)
+#grafik <- "smooth" #NULL #fuer 20cm-Schritte.
+grafik <- NULL
+```
+
+```{r message=FALSE, eval=FALSE, warning=FALSE}
+p2 <- plot_nfk(satz_nr = 2, subtitle = "2020, Satz 2, Feld 4a (*Paper)", wdh = FALSE, grafik = grafik)
+p3 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6", wdh = FALSE, grafik = grafik)
+p4 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b", wdh = FALSE, grafik = grafik)
+p5 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6", wdh = FALSE, grafik = grafik)
+p6 <- plot_nfk(satz_nr = 6, subtitle = "2022, Satz 1, Feld 4a", wdh = FALSE, grafik = grafik) 
+p7 <- plot_nfk(satz_nr = 7, subtitle = "2022, Satz 2, Feld 4b", wdh = FALSE, grafik = grafik) 
+p8 <- plot_nfk(satz_nr = 8, subtitle = "2022, Satz 3, Feld 4a", wdh = FALSE, grafik = grafik) 
+p9 <- plot_nfk(satz_nr = 9, subtitle = "2023, Satz 1, Feld 4b", wdh = FALSE, grafik = grafik) 
+p10 <- plot_nfk(satz_nr = 10, subtitle = "2023, Satz 2, Feld 4b", wdh = FALSE, grafik = grafik) 
+
+
+p2; p3; p4; p5; p6; p7; p8; p9; p10
+```
+
+#Grafik speichern
+```{r message=FALSE, eval=FALSE}
+# file_list <- list(
+#     #     #file1 <- #keine Tensiometer-Daten fuer Satz 1
+#     file2 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2020_Satz2.png",
+#     file3 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1.png",
+#     file4 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2.png",
+#     file5 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3.png",
+#     file6 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1.png",
+#     file7 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2.png",
+#     file8 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3.png",
+#     file9 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz1.png",
+#     file10 = "../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz2.png")
+# 
+# purrr::map2(file_list, list(p2,p3,p4,p5,p6,p7,p8,p9,p10),
+#     ~ggsave(filename = .x, plot = .y, device = "png", width = 10, height = 6, dpi = 300)
+# )
+
+# rm(p2,p3,p4,p5,p6,p7,p8,p9,p10)
+
+```
+
+
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2020_Satz2.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2.png)
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3.png)
+
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz1.png)
+
+\
+\
+![test](../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz2.png)
+
+
+### Plots pro Variante (== Vergleich der Wiederholungen):
+```{r}
+#2020 Satz2: nur an zwei Stellen Tensiometer: keine Wiederholung.
+```
+
+```{r message=FALSE, eval=FALSE}
+#2021 Satz1
+p1 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wfull_plus'", 
+               wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p2 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wfull'", 
+               wdh = TRUE, variante = "Wfull", grafik = grafik)
+p3 <- plot_nfk(satz_nr = 3, subtitle = "2021, Satz 1, Feld 6, Variante 'Wred'", 
+               wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+```{r message=FALSE, eval=FALSE}
+#2021 Satz2
+p4 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b, Variante 'Wfull_plus'", 
+               wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p5 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b, Variante 'Wfull'", 
+               wdh = TRUE, variante = "Wfull", grafik = grafik)
+p6 <- plot_nfk(satz_nr = 4, subtitle = "2021, Satz 2, Feld 4b, Variante 'Wred'", 
+               wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+```{r message=FALSE, eval=FALSE}
+#2021 Satz3
+p7 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wfull_plus'", 
+               wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p8 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wfull'", 
+               wdh = TRUE, variante = "Wfull", grafik = grafik)
+p9 <- plot_nfk(satz_nr = 5, subtitle = "2021, Satz 3, Feld 6, Variante 'Wred'", 
+               wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+```{r message=FALSE, eval=FALSE}
+#2022 Satz1
+p10 <- plot_nfk(satz_nr = 6, subtitle = "2022, Satz 1, Feld 4a, Variante 'Wfull_plus'", 
+                wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p11 <- plot_nfk(satz_nr = 6, subtitle = "2022, Satz 1, Feld 4a, Variante 'Wfull'", 
+                wdh = TRUE, variante = "Wfull", grafik = grafik)
+p12 <- plot_nfk(satz_nr = 6, subtitle = "2022, Satz 1, Feld 4aVariante 'Wred'", 
+                wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+```{r message=FALSE, eval=FALSE}
+#2022 Satz2
+p13 <- plot_nfk(satz_nr = 7, subtitle = "2022, Satz 2, Feld 4b, Variante 'Wfull_plus'", 
+                wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p14 <- plot_nfk(satz_nr = 7, subtitle = "2022, Satz 2, Feld 4b, Variante 'Wfull'", 
+                wdh = TRUE, variante = "Wfull", grafik = grafik)
+p15 <- plot_nfk(satz_nr = 7, subtitle = "2022, Satz 2, Feld 4b, Variante 'Wred'", 
+                wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+```{r message=FALSE, eval=FALSE}
+#2022 Satz3
+p16 <- plot_nfk(satz_nr = 8, subtitle = "2022, Satz 3, Feld 4a, Variante 'Wfull_plus'", 
+                wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p17 <- plot_nfk(satz_nr = 8, subtitle = "2022, Satz 3, Feld 4a, Variante 'Wfull'", 
+                wdh = TRUE, variante = "Wfull", grafik = grafik)
+p18 <- plot_nfk(satz_nr = 8, subtitle = "2022, Satz 3, Feld 4a, Variante 'Wred'", 
+                wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+```{r message=FALSE, eval=FALSE}
+#2023 Satz1
+p19 <- plot_nfk(satz_nr = 9, subtitle = "2023, Satz 1, Feld 4b, Variante 'Wfull_plus'", 
+                wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p20 <- plot_nfk(satz_nr = 9, subtitle = "2023, Satz 1, Feld 4b, Variante 'Wfull'", 
+                wdh = TRUE, variante = "Wfull", grafik = grafik)
+p21 <- plot_nfk(satz_nr = 9, subtitle = "2023, Satz 1, Feld 4b, Variante 'Wred'", 
+                wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+```{r message=FALSE, eval=FALSE}
+#2023 Satz2
+p22 <- plot_nfk(satz_nr = 10, subtitle = "2023, Satz 2, Feld 4b, Variante 'Wfull_plus'", 
+                wdh = TRUE, variante = "Wfull_plus", grafik = grafik)
+p23 <- plot_nfk(satz_nr = 10, subtitle = "2023, Satz 2, Feld 4b, Variante 'Wfull'", 
+                wdh = TRUE, variante = "Wfull", grafik = grafik)
+p24 <- plot_nfk(satz_nr = 10, subtitle = "2023, Satz 2, Feld 4b, Variante 'Wred'", 
+                wdh = TRUE, variante = "Wred", grafik = grafik)
+```
+
+
+#Grafiken der Wiederholung speichern
+```{r message=FALSE, warning=FALSE, eval=FALSE}
+# Jahr <- "2021" #"2023","2022" ,"2021" ## 2020: -- keine Wdh
+# path0 <- "../graphics/nFK_plots/X20cm_Schritte/nFK_"
+# file_list <- list(
+#     file1 = paste0(path0, Jahr, "_Satz1_Wfull_plus.png"),
+#     file2 = paste0(path0, Jahr, "_Satz1_Wfull.png"),
+#     file3 = paste0(path0, Jahr, "_Satz1_Wred.png"),
+#     file4 = paste0(path0, Jahr, "_Satz2_Wfull_plus.png"),
+#     file5 = paste0(path0, Jahr, "_Satz2_Wfull.png"),
+#     file6 = paste0(path0, Jahr, "_Satz2_Wred.png") ,
+#     file7 = paste0(path0, Jahr, "_Satz3_Wfull_plus.png"),
+#     file8 = paste0(path0, Jahr, "_Satz3_Wfull.png"),
+#     file9 = paste0(path0, Jahr, "_Satz3_Wred.png")
+# )
+# 
+# purrr::map2(file_list,
+#              list(p1, p2,p3,p4,p5,p6,p7,p8,p9),           # 2021: p1-p9
+#             # list(p10,p11,p12,p13,p14,p15,p16,p17,p18),  # 2022: p10-p18
+#             # list(p19,p20,p21,p22,p23,p24),              # 2023: p19-p24
+#             ~ggsave(filename = .x, plot = .y, device = "png", width = 12, height = 6, dpi = 300)
+# )
+```
+
+\
+## 2021, Satz1
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1_Wfull_plus.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1_Wfull.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz1_Wred.png) \
+
+## 2021, Satz 2
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2_Wfull_plus.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2_Wfull.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz2_Wred.png) \
+
+## 2021, Satz 3
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3_Wfull_plus.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3_Wfull.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2021_Satz3_Wred.png) \
+
+## 2022, Satz1
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1_Wfull_plus.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1_Wfull.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz1_Wred.png) \
+
+## 2022, Satz2
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2_Wfull_plus.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2_Wfull.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz2_Wred.png) \
+
+## 2022, Satz3
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3_Wfull_plus.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3_Wfull.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2022_Satz3_Wred.png) \
+
+## 2023, Satz1
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz1_Wfull_plus.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz1_Wfull.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz1_Wred.png) \
+
+## 2023, Satz2
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz2_Wfull_plus.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz2_Wfull.png) \
+![aaa](../graphics/nFK_plots/X20cm_Schritte/nFK_2023_Satz2_Wred.png) \
+
+2021, Wfull_plus, Wiederholung b, Bodentiefe: 40-60cm: Dies scheinen Fehlmessungen zu sein. Dafür spricht die hohe Stabw, sowie der Ausfall des Messgerätes nach Bodenfeuchtr-Werten < 140% nFK (maximale Werte aller Daten). Fuer eine weiter-Verwendung in ANNi wird diese Wiederholung aus dem Datensatz entfernt.
+
+#Unplausible Tensiometer-Daten entfernen:
+```{r, include=FALSE, eval=FALSE}
+tensio <- tensio %>%
+    filter(satz_id !=4 | wiederholung != "b" | variante_H2O != "Wfull_plus")# %>%
+#filter(satz_id !=7 | !wiederholung %in% c("b", "c") | variante_H2O != "Wfull_plus")
+```
+
