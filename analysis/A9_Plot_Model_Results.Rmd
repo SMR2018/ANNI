@@ -21,7 +21,7 @@ library(broom)
 
 ## Daten einlesen
 ```{r Daten einlesen}
-df_roh <- fread("../data/derived_data/input_tabelle_2020_2022_20231113_20cm_complete_mitNA.csv")
+df_roh <- fread("../data/derived_data/input_tabelle_2020_2023_20240328_20cm_complete.csv") #2020_2022_20231113_20cm_complete_mitNA.csv")
 df_filtered0 <- df_roh %>% 
     group_by(satz_id, variante_H2O, wiederholung) %>% 
     mutate(id_all = cur_group_id(), .before = "satz_id") %>%
@@ -36,7 +36,7 @@ df_filtered0 <- df_roh %>%
 
 ## Skalierungs-Daten einlesen: ##VORSICHT! NEUE ZUORDNUGN
 ```{r}
-scaling_data <- fread("../data/derived_data/Models_paper/All_scaling_data_20231120.csv")
+scaling_data <- fread("../data/derived_data/Models_paper/All_scaling_data_20230328.csv")
 
 names_all <- scaling_data$parameter
 
@@ -52,9 +52,48 @@ names(s) <- names_all
 
 
 ```{r}
-names_x <- c("T0020_nFK_Vortag",            # Nur MLP, nicht LSTM
-             "T2040_nFK_Vortag",            # Nur MLP, nicht LSTM
-             "T4060_nFK_Vortag",            # Nur MLP, nicht LSTM
+# names_x <- c("T0020_nFK_Vortag",            # Nur MLP, nicht LSTM
+#              "T2040_nFK_Vortag",            # Nur MLP, nicht LSTM
+#              "T4060_nFK_Vortag",            # Nur MLP, nicht LSTM
+#              "tage_seit_aussaat", 
+#              "Tmean_gradC", 
+#              "Tmean_th9_25_gradC", 
+#              "Tmin_gradC", 
+#              "Tmax_gradC", 
+#              "relLuftfeuchte_mean_prozent", 
+#              #"relLuftfeuchte_min_prozent", # laut Olden unwichtig
+#              #"relLuftfeuchte_max_prozent", # s.o.
+#              "globalstrahlung_Wh_m2", 
+#              "windgeschwindigkeit_m_s", 
+#              "tageslicht_h", 
+#              "tageslicht_h_th9", 
+#              "Tmean_gradC_sum",             # s.o.
+#              "Tmean_th9_25_gradC_sum",      # s.o.
+#              "globalstrahlung_Wh_m2_sum",   # s.o.
+#              "niederschlag_mm_sum",         # s.o.
+#              "tageslicht_h_sum",            # s.o.
+#              "tageslicht_h_th9_sum",        # s.o.
+#              "Ton_prozent",
+#              "Schluff_prozent",
+#              "Sand_prozent",
+#              "C_org_prozent",
+#              "ibi", 
+#              "irmi",
+#              "wasser_input_Vortag" ## bei LSTM Tageswert statt Vortageswert
+# )
+# 
+# names_y <- c(
+#     "T0020_nFK", 
+#     "T2040_nFK",
+#     "T4060_nFK"
+# )
+```
+
+
+```{r}
+names_x <- c("B0020_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+             "B2040_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
+             "B4060_nFK_prozent_Vortag",            # Nur MLP, nicht LSTM
              "tage_seit_aussaat", 
              "Tmean_gradC", 
              "Tmean_th9_25_gradC", 
@@ -81,11 +120,10 @@ names_x <- c("T0020_nFK_Vortag",            # Nur MLP, nicht LSTM
              "irmi",
              "wasser_input_Vortag" ## bei LSTM Tageswert statt Vortageswert
 )
-
 names_y <- c(
-    "T0020_nFK", 
-    "T2040_nFK",
-    "T4060_nFK"
+    "B0020_nFK_prozent",
+    "B2040_nFK_prozent",
+    "B4060_nFK_prozent"
 )
 data1 <- data0 %>% select(all_of(c(names_y,names_x))) #%>%
 ```
@@ -337,5 +375,71 @@ p_zeitreihe
 
 ```{r}
 #ggsave(plot = p_zeitreihe, filename = "~/Downloads/p_zeitreihe_X2.png", device = "png", width = 15, height = 7)
+```
+
+
+
+#######
+```{r}
+list_results <- readRDS("../data/derived_data/Models_paper/df_all_results.rsd")
+```
+```{r}
+list_results[[1]]$data_beispiel %>% filter(variante_H2O == "Wfull", wiederholung == "c")
+list_results[[1]]$result_df %>% 
+    filter(modelX == "X3_MLP_AMBAV")
+```
+
+
+```{r}
+# names(list_results[[1]])
+tabellen_zusammenfuehren <- function(.x){
+df_measured <- list_results[[.x]]$data_beispiel %>% select(tage_seit_aussaat, ends_with("nFK_prozent")) %>%
+    pivot_longer(cols = ends_with("nFK_prozent"), names_to = "depth") %>%
+    mutate(across("depth", ~case_when(.=="B0020_nFK_prozent" ~ "nFK_0020",
+                                      .=="B2040_nFK_prozent" ~ "nFK_2040",
+                                      .=="B4060_nFK_prozent" ~ "nFK_4060",
+                                      )))
+df_predicted <- list_results[[.x]]$result_df %>% 
+    filter(modelX == "X3_MLP_AMBAV") %>%
+    select(tage_seit_aussaat, depth, predicted_nFK)
+
+#result_df_ANNI3
+#"X1_MLP_exp","X2_LSTM_exp","X3_MLP_AMBAV","X4_MLP_tuned","X5_LSTM_AMBAV","X6_LSTM_tuned"
+df_zusammen <- left_join(df_measured, df_predicted, by = c("tage_seit_aussaat", "depth"))
+df_zusammen
+}
+
+df_result <- map(1:length(list_results), ~tabellen_zusammenfuehren(.x)) %>% bind_rows(, .id = "id")
+```
+
+```{r}
+ggplot(df_result,
+       aes(value, predicted_nFK)) +
+    geom_polygon(data = data.frame(x=c(0,0,100,100,0), 
+                                   y=c(0,100,100,0,0)), 
+                 aes(x,y), fill = "lightblue", alpha = 0.3) + 
+    geom_polygon(data = data.frame(x=c(60,60,100,100,60), 
+                                   y=c(60,100,100,60,60)), 
+                 aes(x,y), fill = "lightblue", alpha = 0.5) + 
+    scattermore::geom_scattermore(pointsize = 2, alpha = 0.1) + 
+    geom_point(alpha = 0.1) +
+    geom_abline(slope = 1, intercept = 0, color = "black", linetype = 2) +
+    coord_cartesian(xlim = c(0,140), ylim = c(0,140)) + 
+    facet_wrap(depth~.) +
+    theme_bw() +
+    theme(panel.grid = element_blank(), 
+          aspect.ratio = 1) #+ 
+```
+
+```{r}
+df_result %>%
+    group_by(depth) %>%
+    mutate(x = 1:n()) %>%
+    ggplot(aes(x=x,y=value)) + 
+    geom_line() + 
+    facet_wrap(depth~.) +
+    theme_bw() +
+    theme(panel.grid = element_blank(), 
+          aspect.ratio = 1) #+ 
 ```
 
