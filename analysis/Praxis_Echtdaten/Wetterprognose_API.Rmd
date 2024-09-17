@@ -33,7 +33,7 @@ lon = params$lon
 ```{r}
 api_url <- paste0("api.openweathermap.org/data/2.5/forecast?lat=",
                   params$lat, "&lon=", params$lon,
-                  "&appid=f70b71932815b572d98a8338c13e5dd4")
+                  "&appid=xxxx")
 res = GET(api_url)
 #res
 ```
