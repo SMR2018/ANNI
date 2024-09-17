@@ -1,67 +1,29 @@
 ---
-title: "ANNI – Parametrisierung, Version 1"
+title: "Artificial Neural Net for Irrigation - ANNI"
 author: "Samantha Rubo"
-date: '2021-12-08'
+date: '2024-08-31'
 draft: yes
 ---
 
-Anhand der Daten aus den Projektjahren 2020 und 2021 auf den Versuchsflächen in Schifferstadt (insgesamt X Anbausätze Spinat) und an der HGU (insgesamt 5 Anbausätze) soll eine erste Version des **Bewässerungsmodells ANNI** parametrisiert werden. 
+## Background
 
-Dafür werden zunächst zwei unabhängige Modelle erstellt. Grund dafür ist die unterschiedliche zeitliche Auflösung: Ein Modell wird anhand der Tensiometerwerte (stündlich) und korrespondierender Wetterdaten erstellt (stündlich oder täglich).
+Precise irrigation management in vegetable production is key for optimizing water use and ensuring crop productivity. This repository provides the implementation of two types of artificial neural networks (ANNs)— Multilayer Perceptrons (MLPs) and Long Short-Term Memory (LSTM) networks— for predicting available water capacity (AWC, in %) as the target parameter for irrigation scheduling.
 
+The models are trained using data from a three-year field experiment with spinach across two sites in Germany. The experimental dataset includes soil texture, plant signals, developmental status derived from vegetation indices, and meteorological data such as air temperature, humidity, wind speed, and photothermal time.
 
-### Parameter ANN_Umwelt
+Additionally, pretrained models using publicly available AWC data from 320 stations in Germany were fine-tuned with the experimental data, improving model accuracy and robustness. An ensemble model consolidates the outputs from all models, minimizing cumulative errors and providing robust predictions for various climatic conditions and soil textures.
 
-* **Input-Parameter**
-  * Start-nFK bzw. Output-nFK der letzten Modellierung 
-  * Tage seit Kulturbeginn
-  * Temperatur
-  * Globalstrahlung
-  * rel. Luftfeuchte
-  * Windgeschwindigkeit
-  * Niederschlag
-  * Bewässerungsmenge
-  * (Kultur)
-  * (Boden)
-* **Output-Parameter**
-  * Bodenmatrixpotential (oder umgerechnet in %nfK, aus Tensiometer) in drei Bodentiefen (20, 40, 60cm)
-  
+The implementation of these ANNs is designed to be easily adaptable for other vegetable crops, though it requires expertise in both IT and agricultural management for proper deployment.
 
-Die Input-Parameter des neuronalen Netzes sind identisch mit denen der FAO56, um die Grasreferenzverdunstung zu berechnen, welche wiederum die Berechnungsgrundlage der Geisenheimer Steuerung (GS) ist. Der Outputparameter ist die Änderung im Bodenmatrixpotential (oder %nFK). Dies hat den Sinn, dass Schwellenwerte der nFK definiert werden können, bei denen bewässert werden soll. Dies erübrigt einen kc-Wert, allerdings muss für eine Übertragbarkeit des Modells neue Daten für verschiedene Böden und Kulturen einfließen.
+## Key Features
 
-Theoretisch kann dieses parametrisierte Modell auch für eine **Prognose** genutzt werden. Abgerufene Wetter-Prognosen (Temp, Niederschlag, ggf. Mittelwerte (aktuelle Woche oder Monat, oder Referenzwerte aus den letzten Jahren)) können einem zukünftige Kulturzeitraum (Parameter "Tage seit Kulturbeginn") eingefügt werden. 
-  
-### Ergänzung um "Spinatdaten"
-
-Im nächsten Schritt wird das Modell erweitert um:
-
-* **Input-Parameter Vegetationsindices** des ISARIA-Sensors
-  * IBI
-  * IRMI
-
-Es wird untersucht, wie stark die zusätzlichen Vegetationsindizes das Ergebnis (Ausgabe nFK) beeinflussen, bzw. ob dadurch eine bessere Genauigkeit der Bewässerungsempfehlung möglich ist.
+- **ANN Models:** Two types of ANN architectures: MLP and LSTM networks.
+- **Input Data:** Soil texture, plant vegetation indices, meteorological variables (temperature, humidity, wind speed, etc.).
+- **Fine-Tuning:** Models pretrained with AWC data from 320 stations and fine-tuned with experimental data.
+- **Ensemble Model:** Combines MLP and LSTM outputs for more robust and accurate predictions.
+- **Explainable AI:** Includes variable importance analysis and sensitivity analysis to highlight key drivers for irrigation scheduling.
+- **High Accuracy:** Achieved R² > 0.98 and RMSE < 1.5% across soil depths (0-20 cm, 20-40 cm, 40-60 cm).
 
 
-### Vergleich ANNI & GS
-Die Performance der GS wird evaluiert auf Grundlage der Bodenfeuchtedaten des Tensiometers. Die Genauigkeit der beiden Modelle, ANNI und GS, wird anschließend verglichen.
-
-
-## Abfolge in diesem R-Projekt
-1. Tensiometerdaten (hPa) in %nFK umrechnen
-2. Tages-Mittelwerte der nFK berechnen
-3. Tabelle erstellen für einen gewählten Satz Spinat
-    - Wetterdaten zusammentragen
-    - applizierte Wassermengen 
-    - Tage seit Kulturbeginn
-    - IBI und IRMI
-4. ANNI_0 erstellen (in R)
-5. Parameter mit dem größten Einfluss identifizieren
-6. Güte des Modells ANNI_0 darstellen
-7. ANNI_0 erweitern (in Input-Tabelle) durch IBI und IRMI
-8. Vergleich der Leistung ANNI_0 und ANNI_VI
-9. Regression Änderung Tensiometer (delta %nFK) ~ Geisenheimer Steuerung (KWB)
-10. Vergleich der Güte GS (Regression aus Punkt 9) und ANNI_0 bzw. ANNI_VI
-
-
-
-  
+The correstpondig publication is currently under review. A preprint is available:
+Rubo, Samantha and Zinkernagel, Jana, Enhancing the Prediction of Irrigation Demand for Open Field Vegetable Crops Through Neural Networks, Transfer Learning, and Ensemble Models. Available at SSRN: https://ssrn.com/abstract=4925253
