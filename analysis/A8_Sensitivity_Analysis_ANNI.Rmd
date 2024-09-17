@@ -5,11 +5,13 @@ title: "A8_Sensitivity_Analysis_ANNI"
 
 ```{r, message=FALSE}
 library(keras)
+library(purrr)
 library(mlbench)
 library(dplyr)
 library(neuralnet)
 library(ggplot2)
 library(NeuralSens) #Sensitivity Analysis
+library(tidyr)
 ```
 
 #Gespiechertes Modell laden:
@@ -21,7 +23,21 @@ library(NeuralSens) #Sensitivity Analysis
 #filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0020cm_20230718"
 # filepath_tf <- "../data/derived_data/Model5_DWD_pretrained/ANNI_Tensorflow_Schicht0020cm_mit_Versuchsdaten_20230718"
 
-filepath_tf <- "../data/derived_data/Models_paper/X1_Model1_MLP_experimental_data/"
+
+##list.dirs("../data/derived_data/Models_paper/", recursive = F, full.names = F)
+model_name <- 
+        "X1_Model1_MLP_experimental_data"      
+#    "X1_reduced_Model1_MLP_experimental_data"
+#  "X2_Model2_LSTM_experimental_data"               
+#  "X3_2_Model3_1a_MPL_pretrained_AMBAV_meteo"      
+#  "X3_Model3_1a_MPL_pretrained_AMBAV"         
+#  "X3_reduced_Model3_1a_MPL_pretrained_AMBAV_meteo" 
+#  "X4_2_Model3_1b_MLP_tuned_experimental_data"     
+#  "X4_Model3_1b_MLP_pretrained2_experimental_data" 
+#  "X4_reduced_Model3_1b_MLP_tuned_experimental_data"
+#  "X5_Model3_2a_LSTM_pretrained_AMBAV"             
+#  "X6_Model3_2b_LSTM_pretrained2_experimental_data"
+filepath_tf <- paste0("../data/derived_data/Models_paper/", model_name)
 
 new_model <- load_model_tf(filepath_tf)
 # Check its architecture
@@ -82,6 +98,7 @@ map(wts_struct, ~.x$neural_struct)
 
 ```{r}
 ##c("sigmoid", "ReLU", "linear") 
+#actfunc <-c("sigmoid", "sigmoid", "linear") 
 actfunc <-c("sigmoid", "sigmoid", "sigmoid", "linear") 
 ```
 
@@ -113,6 +130,9 @@ coefnames1 = names_x
 
 #Sensitivitätsanalyse für 3 Tiefen:
 ```{r}
+# training <- training[1:3000,]
+# trainingtarget <- trainingtarget[1:3000,]
+
 idx <- 1:3
 sens_keras <- map(idx,
                   ~SensAnalysisMLP(
@@ -132,6 +152,7 @@ sens_keras <- map(idx,
 
 ```{r warning=FALSE, include=FALSE}
 p1 <- map(sens_keras, ~plot(.x))
+#p1
 ```
 
 ```{r, fig.width=10, dpi=300, warning=FALSE, include=FALSE}
@@ -142,25 +163,81 @@ p1[[1]][[1]] +
     theme(panel.grid = element_blank())
 ```
 
+
+```{r}
+engl_labs <- c(
+    "B0020_nFK_prozent_Vortag" = "AWC 0-20 cm d-1",
+    "B2040_nFK_prozent_Vortag" = "AWC 20-40 cm d-1",
+    "B4060_nFK_prozent_Vortag" = "AWC 40-60 cm d-1",
+    "wasser_input_Vortag" = "Water supply d-1",
+    "tage_seit_aussaat" = "DAS",
+    "Tmean_gradC" = "Tmean",
+    "Tmean_th9_25_gradC" = "T_opt",
+    "Tmin_gradC" = "Tmin",
+    "Tmax_gradC" = "Tmax",
+    "relLuftfeuchte_mean_prozent" = "Humidity",
+    "globalstrahlung_Wh_m2" = "Irradiation",
+    "windgeschwindigkeit_m_s" = "Wind speed",
+    "tageslicht_h" = "Hours daylight", 
+    "tageslicht_h_th9" = "Photothermal time",
+    "Tmean_gradC_sum" = "cumsum Tmean",
+    "Tmean_th9_25_gradC_sum" = "cumsum T_opt",
+    "globalstrahlung_Wh_m2_sum" = "cumsum Irradiation",
+    "niederschlag_mm_sum" = "cumsum Precipitation", #Ist hier
+    "tageslicht_h_sum" = "cumsum Hours daylight",
+    "tageslicht_h_th9_sum" = "cumsum photothermal time", #"cumsum daylight threshold",
+    "Ton_prozent" = "Clay",
+    "Schluff_prozent" = "Silt",
+    "Sand_prozent" = "Sand",
+    "C_org_prozent" = "C org",
+    "ibi" = "IBI", #VI 1",
+    "irmi" = "IRMI"#"VI 2"
+)
+
+```
+
 # Sensitivitätsplot sortiert:
 ```{r}
 p1_adapted_list <- map(
-    idx, 
-    ~p1[[.x]][[2]] + 
-        theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
-              axis.title.x = element_blank(),
+    idx,
+    ~p1[[.x]][[2]] +
+        scale_x_discrete(breaks =names(engl_labs), labels = engl_labs) +#, limits = names(engl_labs)) +
+        scale_y_continuous(breaks = c(0,0.05,0.1,0.15)) +
+        theme(axis.text.x = element_text(angle = 0, hjust = 1, vjust = 0.5),
+              #axis.title.x = element_blank(),
               panel.grid = element_blank(),
-              plot.margin = unit(c(20,10,20,10), units = "points"))
+              plot.margin = unit(c(20,10,20,10), units = "points")) +
+        coord_flip() + ##hochkant
+        xlab("") +
+        ylab("Importance")
 )
-#p1_adapted_list
+p1_adapted_list
 ```
 
 ```{r, fig.width=7, fig.height=12}
 library(ggpubr)
-ggpubr::ggarrange(plotlist = p1_adapted_list, ncol = 1, 
-                  labels = c("A) 0-20 cm", "B) 20-40 cm", "C) 40-60 cm"), 
-                  hjust = 0, vjust = 1)
+p_importance_stack <- ggpubr::ggarrange(
+    plotlist = p1_adapted_list, ncol = 3,
+    labels =  "AUTO", #c("A) 0-20 cm", "B) 20-40 cm", "C) 40-60 cm"),
+    hjust = 0, vjust = 1)
+p_importance_stack
 ```
+
+## Grafik speichern
+```{r}
+# bild1 <- "Olden_X1_reduced"# 
+# ggsave(plot = p_importance_stack,
+#        filename = paste0("../data/derived_data/Models_paper/Olden_importance_per_model/", bild1, ".png"),
+#        device = "png", width = 7, height = 12)
+
+bild1 <- "Olden_X1_reduced_"
+# ggsave(plot = p_importance_stack,
+#        filename = paste0("../data/derived_data/Models_paper/Olden_importance_per_model/", bild1, "hochkant.png"),
+#        device = "png", height = 4, width = 10, scale = 1)
+```
+
+
+
 
 
 ```{r, warning=FALSE, include=FALSE}
@@ -169,5 +246,418 @@ ggpubr::ggarrange(plotlist = p1_adapted_list, ncol = 1,
 p1[[1]][[3]] + theme(legend.position = "none")
 legend3 <- ggpubr::get_legend(p1[[1]][[3]])
 plot(legend3)
+```
+
+# Mean Sensitivity data
+```{r}
+df_heat <- map(1:3,
+               ~sens_keras[[.x]]$sens[[1]] %>%
+                   select(mean) # Mean sensitivity
+               #select(meanSensSQ) #Mean squared sensitivity
+) %>% bind_cols() %>%
+    set_names(c("B0020", "B2040", "B4060")) %>%
+    mutate(parameter = rownames(.), .before = "B0020")
+```
+
+```{r}
+#fwrite(df_heat, file = "../data/derived_data/Models_paper/Olden_importance_per_model/Sensitivity_X4_reduced.csv")
+```
+
+
+# Sensitivity heatmap ggplot
+```{r}
+library(viridis)
+```
+
+```{r}
+df_heat_long <- df_heat %>% 
+    pivot_longer(cols = -parameter, names_to = "X", values_to = "Sensitivity") #%>%
+### für bessere Visualisierung! --> mean statt squared sensitivity:
+# mutate(across(Sensitivity, ~sqrt(.)))
+
+# labels anpassen: df_heat_long
+
+df_heat_long <- df_heat_long %>%
+    mutate(parameter_engl = factor(parameter,levels = names(engl_labs),
+                                   labels = engl_labs), .after = "parameter")
+
+```
+
+
+```{r}
+p_sens <- ggplot(df_heat_long, aes(X, parameter_engl, fill= Sensitivity)) + 
+    geom_tile() +
+    scale_fill_viridis(discrete=FALSE) +
+    scale_y_discrete("", limits  = rev(levels(df_heat_long$parameter_engl))) +
+    scale_x_discrete("") +
+    theme_bw() +
+    theme(aspect.ratio = 5,
+          panel.grid = element_blank())
+
+p_sens
+```
+
+
+## Alle Sensitivity MLPs plotten:
+```{r}
+path1 <- "../data/derived_data/Models_paper/Olden_importance_per_model/"
+files_list <- c("Sensitivity_X1.csv",
+                #"Sensitivity_X1_reduced.csv",
+                #"Sensitivity_X3.csv", 
+                "Sensitivity_X3_2.csv",
+                #"Sensitivity_X3_reduced.csv",
+                #"Sensitivity_X4.csv"
+                 "Sensitivity_X4_2.csv"
+               #"Sensitivity_X4_reduced.csv"
+               )
+
+df_all_sens <- map_df(1:3, ~fread(file = paste0(path1, files_list[.x])), .id = "id")
+
+## Eigentlich MLP AMBAV: nicht gemessene Parameter sollten 0 sein.
+#df_all_sens
+
+```
+
+```{r}
+df_all_sens_long <- df_all_sens %>%
+    mutate(parameter_engl = factor(parameter,levels = names(engl_labs),
+                                   labels = engl_labs), .after = "parameter") %>%
+    pivot_longer(cols = -c(id:parameter_engl), 
+                 names_to = "X", values_to = "Sensitivity") %>%
+    ### für bessere Visualisierung! --> mean statt squared sensitivity:
+    mutate(across(Sensitivity, ~sqrt(sqrt(.^2))))
+```
+
+```{r}
+plot_sens_stack <- p_sens %+% (data = df_all_sens_long) + 
+    facet_grid(.~id, labeller = as_labeller(c("1" = "MLP\nexp", "2"="MLP\nAMBAV", "3" = "MLP\ntuned"))) + 
+    scale_x_discrete(labels = c("20", "40", "60")) +
+    xlab("Soil depth (cm)")
+plot_sens_stack
+```
+#Änderung von MLP exp zu MLP tuned. 
+Wie hat das pretraining durch AMBAV die Gewichte verändert?
+```{r, warning=FALSE}
+change_sensitivity <- map_df(
+    c("B0020", "B2040", "B4060"),
+    ~df_all_sens %>% select(id, parameter,.x) %>%
+        pivot_wider(id_cols = parameter, names_from = id, values_from = .x, names_prefix = "X") %>%
+        mutate(across(X1:X3, ~(.^2)^2)) %>% # die doppelte Wurzel rückgängig machen ?? 
+        mutate(diff1 = (X3)/(X3-X1)) %>% #X1: exp_model, X2: pretrining AMBAV model, X3: tuned_model
+        select(parameter, diff1), 
+    .id = "id"
+)
+```
+
+```{r, warning=FALSE}
+plot_change <- ggplot(data = change_sensitivity %>% #drop_na() %>% 
+                          mutate(across(diff1, ~ifelse(.>15, 15,.))), ## vorsicht! Nur für Ansicht des einen Outliers geändert. Visualisierung noch anpassen!
+                      aes(diff1,parameter)) +
+    geom_vline(xintercept = 0, linewidth = 0.1) +
+    geom_col(position = position_dodge2(padding = 0.2)) +
+    facet_grid(.~id, shrink = T,#drop = T,
+               labeller = as_labeller(c("1" = "0-20 cm\n", 
+                                        "2"="20-40 cm\n", 
+                                        "3" = "40-60 cm\n"))) + 
+    scale_x_continuous(limits = c(NA, 15)) + 
+    scale_y_discrete(limits = rev(names(engl_labs)), labels = rev(engl_labs)) +
+    coord_cartesian(clip = "off", expand = F ) +
+    theme_bw() + 
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank(),
+          panel.border = element_rect(fill = NA, linewidth = 0.1),
+          panel.spacing.x = unit(12, "points"),
+          aspect.ratio = 3) +
+    # xlab("Change in parameter sensitivity of tuned_model compared to exp_model")
+xlab("Relative changes in sensitivity from MLP_exp to MLP_tuned")
+
+plot_change
+```
+
+Bei tuned Model X3 in Tiefe 0-20 cm wirkt sich eine Änderung der Vortages-nFK 3.5x mehr aus als bei dem ein ANN X1, das nur mit experimentellen Daten trainiert wurde.
+
+Tageslich_h_sum bleibt gleich. Hm.
+
+```{r}
+library(ggpubr)
+legend1 <- get_legend(plot_sens_stack)
+p_sensitivity_all <- ggpubr::ggarrange(
+    plotlist = list(legend1,
+                    plot_sens_stack + xlab("Soil depth (cm) \n") +
+                        theme(plot.background = element_rect(fill = NULL), #"green"),
+                              plot.margin = unit(c(20,5,10,-10), "points"),
+                              legend.position = "none"), 
+                    plot_change +
+                        theme(axis.text.y = element_blank(),
+                              axis.ticks.y = element_blank(),
+                              axis.title.y = element_blank(),
+                              aspect.ratio = NULL,
+                              plot.margin = unit(c(20,5,10,0), "points"),
+                              plot.background = element_rect(fill = NULL) #"red")
+                        ) +
+                        # xlab("Change in parameter sensitivity \nof tuned_model compared to exp_model")
+                    xlab("Relative changes in sensitivity \nfrom MLP_exp to MLP_tuned")
+    ), 
+    nrow = 1, 
+    #align = "v", 
+    #common.legend = T, 
+    #legend = "bottom", 
+    widths = c(0.2, 1, 0.6), 
+    labels = c("", "A", "B"), 
+    vjust = 1.1
+) 
+p_sensitivity_all
+```
+```{r}
+ggsave(plot = p_sensitivity_all, filename = "~/Downloads/p_sensitivity_all2.png", 
+       device = "png", width = 8, height = 5, scale = 1)
+```
+
+
+<!-- ## Partial Dependence Plots (PDP) -->
+<!-- ```{r} -->
+<!-- library(pdp) -->
+<!-- library(iml)  -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # Beispiel-Daten vorbereiten -->
+<!-- # Angenommen, `training` ist ein DataFrame mit den Eingangsvariablen -->
+<!-- # und `trainingtarget` ein DataFrame mit mehreren Zielvariablen (Outputs) -->
+<!-- # X <- as.data.frame(training) -->
+<!-- # names(X) <- names_x -->
+<!-- #y <- trainingtarget  # Alle Zielvariablen als DataFrame -->
+
+<!-- X <- as.data.frame(df_scaled[,names_x]) -->
+<!-- y <- as.data.frame(df_scaled[,names_y]) -->
+
+<!-- # Definieren der Vorhersagefunktion für das Keras-Modell -->
+<!-- predict_function <- function(model, newdata) { -->
+<!--     predict_proba <- predict(model, as.matrix(newdata)) -->
+<!--     return(as.data.frame(predict_proba))  # Rückgabe als DataFrame für mehrere Ausgaben -->
+<!-- } -->
+
+
+<!-- ##pred2: -->
+<!-- # predict_function <- function(model, newdata) { -->
+<!-- # pred <- new_model %>% predict(rbind(test, training), stateful = FALSE) -->
+<!-- # #rescale to normal nFK-values: -->
+<!-- # sy <- matrix(s[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T) -->
+<!-- # my <- matrix(m[names_y], nrow = nrow(pred), ncol = length(names_y), byrow = T) -->
+<!-- # pred_nFK <- pred * sy + my -->
+<!-- # } -->
+
+<!-- # Erstellen des Predictor-Objekts -->
+<!-- predictor <- Predictor$new(new_model, data = X, y = y, predict.function = predict_function) -->
+
+<!-- # Generieren des PDP für eine spezifische Eingangsvariable, z.B. 'B0020_nFK_prozent_Vortag' -->
+<!-- pdp_result <- FeatureEffect$new(predictor, feature = "wasser_input_Vortag", method = "pdp") -->
+
+<!-- # Plotten des PDP -->
+<!-- pdp_plot <- plot(pdp_result) -->
+<!-- print(pdp_plot) -->
+
+
+<!-- #Other variables -->
+<!-- # map -->
+<!-- # plot(pdp_result$set.feature("ibi")) -->
+<!-- pdp_result$plot() -->
+
+
+<!-- ## All variables -->
+<!-- # effs <- FeatureEffects$new(predictor)#, grid.size = 10) -->
+<!-- # plot(effs) -->
+<!-- ``` -->
+<!-- # ICE-Plot (Individual Conditional Expectation Plot)  -->
+<!-- bietet eine detailliertere Ansicht der Beziehung zwischen der Eingangsvariablen und den Zielvariablen für einzelne Datenpunkte. -->
+<!-- ```{r} -->
+<!-- # Generieren des ICE-Plots für eine spezifische Eingangsvariable -->
+<!-- ice_result <- FeatureEffect$new(predictor, feature = "ibi", method = "ice") -->
+
+<!-- # Plotten des ICE-Plots -->
+<!-- ice_plot <- plot(ice_result) -->
+<!-- print(ice_plot) -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- names_x -->
+<!-- ``` -->
+
+<!-- ## Measure interactions -->
+<!-- We can also measure how strongly features interact with each other. The interaction measure regards how much of the variance of f(x) is explained by the interaction. The measure is between 0 (no interaction) and 1 (= 100% of variance of f(x) due to interactions). For each feature, we measure how much they interact with any other feature: -->
+<!-- ```{r} -->
+<!-- interact <- Interaction$new(predictor, grid.size = 15) -->
+<!-- pi1 <- plot(interact) -->
+<!-- pi1 +  scale_y_discrete(limits = rev(names(engl_labs)), labels = rev(engl_labs)) -->
+<!-- ``` -->
+
+<!-- We can also specify a feature and measure all it’s 2-way interactions with all other features: -->
+<!-- ```{r} -->
+<!-- interact2 <- Interaction$new(predictor, feature = "B0020_nFK_prozent_Vortag", grid.size = 15) -->
+<!-- plot(interact2) -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- # Define the prediction function for a specific output -->
+<!-- predict_function_output1 <- function(object, newdata) { -->
+<!--     predict_proba <- predict(object, as.matrix(newdata)) -->
+<!--     return(predict_proba[, 1])  # Return only the first output -->
+<!-- } -->
+
+<!-- # Generate PDP for a specific feature and output, e.g., 'Petal.Width' -->
+<!-- pdp_output1 <- partial( -->
+<!--     object = new_model, -->
+<!--     pred.var = "ibi", -->
+<!--     pred.fun = predict_function_output1, -->
+<!--     train = X, -->
+<!--     grid.resolution = 50 -->
+<!-- ) -->
+
+
+<!-- pdp_plot1 <- autoplot(pdp_output1, contour = TRUE) + ggtitle("Output 1") -->
+<!-- print(pdp_plot1) -->
+<!-- ``` -->
+
+<!-- # RANDOM FOREST -->
+
+<!-- ```{r} -->
+<!-- library("randomForest") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- df1 <- as.data.frame(df_scaled) -->
+<!-- idx <- c(which(names(df1) == "C_org_prozent")) -->
+<!-- df1 <- df1[, -idx] -->
+
+<!-- rf <- randomForest(B0020_nFK_prozent ~ ., data = df1[,-c(2:3)])#, ntree = 10) -->
+
+<!-- X <-df1[,-c(1:3)] -->
+<!-- predictor <- Predictor$new(rf, data = X, y = df1$B0020_nFK_prozent) -->
+<!-- imp <- FeatureImp$new(predictor, loss = "mae") -->
+<!-- plot(imp) -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- summary(rf) -->
+<!-- rf -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- names_x -->
+<!-- ale <- FeatureEffect$new(predictor, feature = "tageslicht_h_th9_sum", grid.size = 10) -->
+<!-- ale$plot() -->
+
+<!-- effs <- FeatureEffects$new(predictor, grid.size = 10) -->
+<!-- plot(effs) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- interact <- Interaction$new(predictor, grid.size = 15) -->
+<!-- plot(interact) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- library(ModelMetrics) -->
+<!-- rf_predicted <- predict(object = rf, newdata = df1[,-c(1:3)]) -->
+<!-- sy = 39 -->
+<!-- my = 76 -->
+<!-- rf_predicted_rescaled <- rf_predicted * sy + my -->
+<!-- y_rescaled <- df1$B0020_nFK_prozent * sy + my -->
+<!-- ModelMetrics::rmse(y_rescaled, rf_predicted_rescaled) -->
+
+<!-- lm1 <- lm(rf_predicted_rescaled ~ y_rescaled) -->
+<!-- summary(lm1) -->
+<!-- plot(lm1) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- plot(y_rescaled, rf_predicted_rescaled) -->
+<!-- ``` -->
+<!-- For Random Forests, standardization of the data is generally not required. This is because Random Forests are tree-based models, and they are inherently insensitive to the scale of the features. Each decision tree in the forest splits the data based on feature thresholds, and these splits are unaffected by the relative scales of the features. -->
+<!-- ```{r} -->
+
+<!-- # Example dataset: Simulated multi-output data -->
+<!-- set.seed(123) -->
+
+<!-- # X <- as.data.frame(matrix(rnorm(n * p), nrow = n, ncol = p)) -->
+<!-- # names(X) <- paste0("X", 1:p) -->
+<!-- # y <- as.data.frame(matrix(rnorm(n * 3), nrow = n, ncol = 3))  # Three outputs -->
+<!-- # names(y) <- paste0("Y", 1:3) -->
+
+<!-- X <- data1[,c(names_x)] -->
+<!-- y <- data1[,c(names_y)] -->
+<!-- # Split the data into training and test sets -->
+<!-- train_indices <- sample(seq_len(nrow(X)), size = 0.7 * nrow(X)) -->
+<!-- X_train <- X[train_indices, ] -->
+<!-- X_test <- X[-train_indices, ] -->
+<!-- y_train <- y[train_indices, ] -->
+<!-- y_test <- y[-train_indices, ] -->
+
+<!-- # Train a separate Random Forest model for each output -->
+<!-- rf_models <- lapply(1:ncol(y_train), function(i) { -->
+<!--     randomForest(X_train, y_train[[i]], ntree = 500, importance = TRUE) -->
+<!-- }) -->
+
+<!-- # Evaluate the models -->
+<!-- rf_predictions <- sapply(1:length(rf_models), function(i) { -->
+<!--     predict(rf_models[[i]], X_test) -->
+<!-- }) -->
+
+<!-- # Calculate performance metrics for each output -->
+<!-- evaluate_model <- function(predictions, actual) { -->
+<!--     mae <- mean(abs(predictions - actual)) -->
+<!--     rmse <- sqrt(mean((predictions - actual)^2)) -->
+<!--     r2 <- cor(predictions, actual)^2 -->
+<!--     list(MAE = mae, RMSE = rmse, R2 = r2) -->
+<!-- } -->
+
+<!-- performance_metrics <- lapply(1:ncol(y_test), function(i) { -->
+<!--     evaluate_model(rf_predictions[, i], y_test[[i]]) -->
+<!-- }) -->
+
+<!-- # Print performance metrics -->
+<!-- print(performance_metrics) -->
+
+<!-- # Plot feature importance for each model -->
+<!-- par(mfrow = c(1, 3))  # Arrange plots in a single row -->
+<!-- for (i in 1:length(rf_models)) { -->
+<!--     varImpPlot(rf_models[[i]], main = paste("Output", i)) -->
+<!-- } -->
+
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- varImpPlot(rf_models[[1]]) -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- library(partykit) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+
+
+<!-- # Extract a single tree from the Random Forest -->
+<!-- tree <- getTree(rf_models[[1]], k = 1, labelVar = TRUE) -->
+
+<!-- # Convert the extracted tree to a format suitable for plotting -->
+<!-- # Extract the tree as a party object for visualization -->
+<!-- party_tree <- as.party(rf_models[[1]]$forest$`1`) -->
+
+<!-- # Plot the tree using the rpart.plot package -->
+<!-- rpart.plot(party_tree) -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+
+<!-- ``` -->
+
+
+```{r}
+#data0 %>% summarise(across(ends_with("nFK_prozent"), ~sd(.)))
+
+data0 %>% group_by(satz_id, variante_H2O, wiederholung) %>%
+    mutate(across(ends_with("nFK_prozent"), ~c(0, diff(.)))) %>% 
+    ungroup() %>%
+    summarise(across(ends_with("nFK_prozent"), ~sd(.)))
 ```
 
