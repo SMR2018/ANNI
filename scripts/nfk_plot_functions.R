@@ -1,6 +1,7 @@
 #Plots:
 ### nFK plotten
 
+
 nfk_interpolation <- function(.data, .gruppen=gruppen){
     a <- .data %>% ungroup 
     # Schichtmittelpunkte gewählt, statt 20cm-Schichtdicke
@@ -224,7 +225,7 @@ plot_nfk <- function(satz_nr, subtitle, wdh = FALSE, variante = NULL, grafik=NUL
             scale_fill_manual("Stabw Bodenfeuchte (% nFK)",
                               values = my_colors_sd,
                               labels = my_labels_sd,
-                              drop = FALSE
+                              drop = TRUE #FALSE
             )+
             
             geom_segment(data=wasser_gesamt_sd2,
@@ -243,7 +244,7 @@ plot_nfk <- function(satz_nr, subtitle, wdh = FALSE, variante = NULL, grafik=NUL
                            c(nFK = "Bodentiefe (cm)",
                              wasserinput = "Wassereintrag (mm)")),
                        .cols = label_value),
-                   drop = FALSE # damit Wfull_plus in Satz1 dargestellt wird (ohne Daten)
+                   drop = TRUE #FALSE # damit Wfull_plus in Satz1 dargestellt wird (ohne Daten)
         ) + 
         theme_bw() +
         theme(
