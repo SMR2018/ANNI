@@ -1,4 +1,4 @@
-plot_measured_predicted_lm <- function(linear_model = lm1, data = result){
+plot_measured_predicted_lm <- function(linear_model = lm1, data = result, alpha = 0.1){
     df_label <- data.frame(
         depth = labels1,
         eq_term = map_chr(
@@ -30,7 +30,7 @@ plot_measured_predicted_lm <- function(linear_model = lm1, data = result){
                                        y=c(min_nfk,100,100,min_nfk,min_nfk)), 
                      aes(x,y), fill = "lightblue", alpha = 0.5) + 
         scattermore::geom_scattermore(pointsize = 2, alpha = 0.1) + 
-        geom_point(alpha = 0.1) +
+        geom_point(alpha = alpha) +
         geom_abline(slope = 1, intercept = 0, color = "black", linetype = 2) +
         facet_wrap(depth~.) +
         theme_bw() +
