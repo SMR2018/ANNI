@@ -12,25 +12,28 @@ library(data.table)
 
 # Daten einlesen:
 ```{r}
-data_roh <- data.table::fread(
-    "../data/derived_data/input_tabelle_2020_2022_20231113_20cm_complete_mitNA.csv",
-    sep = ";", dec = ".") %>% as_tibble() 
+files2 <- c("../data/derived_data/input_tabelle_2020_2023_20240328_20cm_complete.csv",
+            "../data/derived_data/input_tabelle_2020_2023_20240328_20cm_complete_DLR.csv")
+
+data_roh <- map_df(files2, 
+                   ~data.table::fread(.x, sep = ";", dec = ".")
+)%>% as_tibble() 
 
 data_filtered <- data_roh %>%
     select(where(is.numeric), -satz_id) 
 ```
 
 
-```{r, rows.print = 32}
+```{r, rows.print = 20}
 m <- colMeans(data_filtered, na.rm = TRUE)
 s <- apply(data_filtered, 2, sd, na.rm=TRUE)
 scaling_data <- data.frame(m=m, s=s, parameter = colnames(data_filtered), row.names = 1:length(m))
 
 # Für Bodentextur anpassen, da nur wenige Werte
 #s <- ifelse(s == 0, 1, s)
-idx <- which(scaling_data$parameter %in% c("Ton_prozent", "Schluff_prozent", "Sand_prozent"))
-scaling_data[idx, "m"] <- 50
-scaling_data[idx, "s"] <- 30
+# idx <- which(scaling_data$parameter %in% c("Ton_prozent", "Schluff_prozent", "Sand_prozent"))
+# scaling_data[idx, "m"] <- 50
+# scaling_data[idx, "s"] <- 30
 
 
 #C-Org Gehalte: seperate m und s berechnen
@@ -49,7 +52,7 @@ scaling_data
 
 #Skalierungs-Daten speichern für Skalierung neuer Input-Daten in der Anwendung
 ```{r}
-# fwrite(scaling_data, file = "../data/derived_data/Models_paper/All_scaling_data_20231120.csv")
+# fwrite(scaling_data, file = "../data/derived_data/Models_paper/All_scaling_data_20230328.csv")
 ```
 
 

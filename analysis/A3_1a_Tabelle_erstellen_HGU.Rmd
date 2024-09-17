@@ -1,0 +1,494 @@
+---
+title: "3. Tabelle erstellen für einen gewählten Satz Spinat"
+author: "Samantha Rubo"
+date: '2021-12-10'
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ggnewscale)
+library(tidyr)
+library(DBI)
+library(purrr)
+```
+
+#Wetter-Daten aus DB auslesen:
+```{r}
+path0 <- "GeoSenSys2020/Data_2020/Database_Protokolle/Database_CSV_Tabellen_HGU/HGU_GeoSenSys_V3_6.db"
+# Verbindung zur Datenbanl herstellen:
+path1 <- ifelse(Sys.info()["user"] == "samantha_machgu",
+                "~/Documents/Mac_Github/", 
+                "../../"
+)
+db <- paste0(path1, path0) # DB in other R-Project
+```
+
+## Daten aus Ergebnis A1a einlesen:
+```{r}
+input_tabelle <- fread("../data/derived_data/A1a_tabelle_20240327.csv")
+input_tabelle <- input_tabelle %>% mutate(across(zeit_messung, ~as_date(.)))
+```
+
+
+\
+#Fehlende Werte approximieren:
+```{r}
+input_tabelle <- input_tabelle %>%
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    #Fehlende Werte Approximieren:
+    mutate(across(.cols = contains("nFK"), 
+                  # ~zoo::na.approx(., na.rm = FALSE))
+                  ~stats::approx(x = ., n = n(), rule = 2, method = "linear")$y)
+           #~Hmisc::approxExtrap(x = 1:n(), y=.x, xout = 1:n(), na.rm = T, rule=2, method = "constant")$y
+    )
+```
+
+
+## Bodenart anfuegen
+```{r}
+file1 <- "~/Documents/Mac_Github/GeoSenSys2020/Auswertung_Saetze/Water retention curves/Soil_texture_vanGenuchten_summary.csv"
+soil_params <- data.table::fread(file1)
+soil_params <- soil_params[ort == "HGU" & bodentiefe_cm == "0-30",]
+soil_params
+
+input_tabelle <- input_tabelle %>% 
+    mutate(Ton_prozent = soil_params$Ton_prozent_mean, ##20 --> 9.7
+           Schluff_prozent = soil_params$Schluff_prozent_mean, #30 --> 38
+           Sand_prozent = soil_params$Sand_prozent_mean, ##50 --> 52.3
+           C_org_prozent = 1.2)
+```
+
+## ISARIA-Daten anfügen
+```{r, eval=TRUE}
+db1 <- dbConnect(RSQLite::SQLite(), db)
+isaria <- dbGetQuery(db1, "SELECT
+                     Spinat_Saetze.satz_id,
+                     ISARIA_N.datum_messung,
+                     Varianten.variante_H2O,
+                     Parzellen.wiederholung,
+                     ISARIA_N.ibi,
+                     ISARIA_N.irmi
+                     FROM ISARIA_N
+
+                     LEFT JOIN Parzellen ON ISARIA_N.parzelle_id = Parzellen.parzelle_id
+                     LEFT JOIN Varianten ON Parzellen.variante_id = Varianten.variante_id
+                     LEFT JOIN Spinat_Saetze ON Varianten.satz_id = Spinat_Saetze.satz_id;") %>%
+    mutate_at("datum_messung", ~as_date(.))
+dbDisconnect(db1)
+
+#Mittelwert pro Parzelle Messzeitpunkt
+isaria <- isaria %>%
+    group_by(satz_id, variante_H2O, wiederholung, datum_messung) %>%
+    summarise(across(ibi:irmi, ~mean(., na.rm=TRUE)), .groups = "drop") %>%
+    mutate_if(is.numeric, ~round(., 2))
+
+
+# #NEU: smoothed data aus Auswertung verwenden!
+# isaria <- fread("../../GeoSenSys2020/Auswertung_Saetze/ISARIA_Alignment/HGU_ISARIA_extrapolated_smoothed.csv") %>%
+#      mutate_at("datum_messung", ~as_date(.))
+```
+
+
+#Isaria: Interpolation zwischen den Messtagen:
+
+```{r, warning=FALSE}
+input_tabelle %>% 
+    left_join(isaria, by = c("satz_id", "variante_H2O", "wiederholung", "zeit_messung" = "datum_messung")) %>% 
+    ggplot(aes(x=tage_seit_aussaat, y=ibi, col = variante_H2O, shape = wiederholung)) + 
+    geom_point() + 
+    facet_grid(.~satz_id)
+```
+
+```{r, eval=TRUE, warning=FALSE}
+input_tabelle_joined  <- input_tabelle %>% 
+    left_join(isaria, by = c("satz_id", "variante_H2O", "wiederholung", 
+                             "zeit_messung" = "datum_messung")) %>% 
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    #Werte vor der ersten ISARIA-Messung werden gelöscht (keine Interpolation möglich)
+    mutate(leading_NA = ifelse(is.na(ibi), 0, 1) %>% cumsum(.) %>% cumsum(.)) %>%
+    mutate(before_first_ISARIA = ifelse(leading_NA == 0,0,1)) %>%
+    select(-leading_NA) %>%
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    
+    #entfernen, wenn die Gruppe keine (mindestens 2) ISARIA-Daten enthält
+    filter(sum(ifelse(is.na(ibi),1,0)) < (n()-2)) %>%
+    group_by(satz_id, variante_H2O, wiederholung, before_first_ISARIA) %>%
+    
+    #Zwischen Messtagen (NA) interpolieren:
+    mutate(across(ibi:irmi, 
+                  ~ifelse(before_first_ISARIA==0, NA, 
+                          zoo::na.approx(object=., na.rm = F)
+                  ))) %>%
+    ungroup 
+
+p1 <- ggplot(input_tabelle_joined, 
+             aes(x=tage_seit_aussaat, y=ibi, col = variante_H2O, shape = wiederholung)) +
+    geom_point() +
+    facet_grid(.~satz_id)
+p1
+p1 + aes(y=irmi)
+
+#rm(input_tabelle)
+```
+```{r}
+input_tabelle_joined %>% 
+    select(satz_id, variante_H2O, wiederholung, tage_seit_aussaat, ibi, before_first_ISARIA) %>%
+    filter(satz_id == 4 & variante_H2O == "Wfull_plus" & wiederholung == "b")
+```
+
+\
+
+
+# ISARIA V2: berechnen: (auch für Tage vor der ersten ISARIA-Messung sinnvoll)
+```{r, warning=FALSE}
+ymin = 5 #nls um 5 nach oben schieben (minimalwert bei fitting geht durch 0)
+
+ISARIA_modelliert <- input_tabelle_joined %>%
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    select(satz_id, variante_H2O, wiederholung, tage_seit_aussaat, Tmean_th9_25_gradC, tageslicht_h_th9) %>%
+    mutate(dae_geschaetzt = 14/(1 + exp((11 - Tmean_th9_25_gradC)/-3)), 
+           ##.after = "zeit_messung"
+    ) %>% 
+    #Modell händisch angepasst (da wenige Daten)
+    #nicht Tmean_th9_25_gradC_sum, sondern tages mittelwert!, da fitting auf mittelwerten (namen dabei nicht angepasst)
+    mutate(across("dae_geschaetzt", ~ceiling(.+ymin))) %>%
+    #Mittelwerte der geschätzen DAE seit Aussaat:
+    mutate(dae_geschaetzt_mittel = cumsum(dae_geschaetzt) / tage_seit_aussaat, .after = "dae_geschaetzt") %>%
+    #select(datum, tage_seit_aussaat, dae_geschaetzt, dae_geschaetzt_mittel) %>%
+    mutate(dae_erreicht = ifelse(dae_geschaetzt_mittel < tage_seit_aussaat, 1, 0)) %>%
+    mutate(dae = cumsum(dae_erreicht)) %>%
+    select(-dae_geschaetzt, -dae_erreicht, -dae_geschaetzt_mittel, -Tmean_th9_25_gradC)
+
+
+#IBI und IRMI berechnen:
+#ibi = 4.12/(1 + exp((198.135 - tageslicht_h_th9_sum_dae)/63.903)) 
+#irmi = 26.947/(1 + exp((95.968 - tageslicht_h_th9_sum_dae)/224.165))
+
+ISARIA_modelliert <- ISARIA_modelliert %>%
+    ## tageslicht_h_th9_sum_dae berechnen:
+    mutate(tageslicht_h_th9_sum_dae = cumsum(ifelse(dae > 0, tageslicht_h_th9, 0))) %>%
+    mutate(ibi_modelled = 4.12/(1 + exp((198.135 - tageslicht_h_th9_sum_dae)/63.903)),
+           irmi_modelled = 26.947/(1 + exp((95.968 - tageslicht_h_th9_sum_dae)/224.165))) %>%
+    select(-dae, -tageslicht_h_th9_sum_dae, -tageslicht_h_th9)
+#ISARIA_modelliert
+
+
+input_tabelle_joined_from0 <- input_tabelle_joined %>%
+    left_join(ISARIA_modelliert, by = c("satz_id", "variante_H2O", "wiederholung", "tage_seit_aussaat")) %>%
+    mutate(across(ibi, ~ifelse(before_first_ISARIA == 0, ibi_modelled, ibi))) %>%
+    mutate(across(irmi, ~ifelse(before_first_ISARIA == 0, irmi_modelled, irmi))) 
+
+
+# ggplot(input_tabelle_joined_from0,aes(irmi,irmi_modelled)) + 
+#     geom_point() + 
+#     geom_abline(slope = 1, intercept = 0) +  
+#     theme(aspect.ratio = 1)
+
+p1 %+% (data = input_tabelle_joined_from0) + aes(y=irmi)
+
+#rm(input_tabelle_joined)
+```
+
+## Wenn sich modelliert und gemessen am Übergang unterscheiden:
+```{r, rows.print=20, warning=FALSE}
+
+## Was sind die größten modellierten ISARIA-Werte pro Satz?
+df_range1 <- input_tabelle_joined_from0  %>% 
+    #die anderen sind nicht wichtig, da nur Witterung
+    group_by(satz_id) %>% ##, variante_H2O, wiederholung) %>%
+    filter(before_first_ISARIA == 0) %>%
+    summarise(max_ibi = max(ibi), min_ibi = min(ibi))
+
+## An welchem Tag entspricht die modellierte ISARIA den gemessenen?
+d1 <- input_tabelle_joined_from0  %>% 
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    select(satz_id, variante_H2O, wiederholung, tage_seit_aussaat, ibi, before_first_ISARIA) %>%
+    
+    filter(before_first_ISARIA == 1) %>%
+    left_join(df_range1, by = "satz_id") %>%
+    mutate(xx = ibi - max_ibi) %>% 
+    filter(abs(xx) == min(abs(xx), na.rm = T)) %>% 
+    group_by(satz_id) %>% ##auf Satz-Ebene
+    summarise(tage_seit_aussaat = floor(mean(tage_seit_aussaat)))
+
+## Bis zu welchem Tag wurde ibi modelliert?
+d2 <- input_tabelle_joined_from0  %>% 
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    select(satz_id, variante_H2O, wiederholung, tage_seit_aussaat, ibi, before_first_ISARIA) %>%
+    filter(before_first_ISARIA == 0) %>%
+    filter(ibi == max(ibi))%>% 
+    select(satz_id, variante_H2O, wiederholung, tage_seit_aussaat_modelled = tage_seit_aussaat) %>%
+    group_by(satz_id) %>% ##auf Satz-Ebene
+    summarise(tage_seit_aussaat_modelled = floor(mean(tage_seit_aussaat_modelled)))
+
+d3 <- d1 %>% left_join(d2, by=c("satz_id")) %>% 
+    mutate(diff1 = tage_seit_aussaat_modelled - tage_seit_aussaat) %>%
+    select(satz_id, diff1)
+
+cat(paste0(c("Die ISARIA Werte der Sätze 2:8 werden zeitlich verschoben um folgende Tage:", d3$diff1)))
+```
+
+```{r}
+# Funktion, um modellierte ISARIA-Werte zeitlich zu verschieben
+shift_isaria_func <- function(x, shift1){
+    shift1 <- ifelse(is.na(shift1), 0, shift1)
+    nn <- length(x)
+    x_new1 <- rep(min(x, na.rm = T), times = shift1)
+    x_new2 <- x[1:(nn-shift1)]  
+    x_out <- c(x_new1, x_new2)
+    x_out
+}
+
+shift_isaria_func(x = c(1:10), shift = NA)
+shift_isaria_func(x = c(1:10), shift = 3)
+```
+
+```{r, rows.print=20, warning=FALSE}
+input_tabelle_joined_from0_corrected <- input_tabelle_joined_from0 %>% 
+    left_join(d3, by=c("satz_id")) %>% 
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    mutate(across(c(ibi, irmi), 
+                  ~ifelse(before_first_ISARIA == 0, 
+                          shift_isaria_func(x = ., shift1 = abs(unique(diff1+1))), ####geändert!
+                          .)))
+
+p1 %+% (data = input_tabelle_joined_from0_corrected) + aes(y=irmi)
+# rm(input_tabelle_joined_from0)
+```
+## Manuelle Korrekur bei Satz 3:
+```{r}
+input_tabelle_joined_from0_corrected <- input_tabelle_joined_from0_corrected %>%
+    mutate(across(irmi, 
+                  ~ifelse(satz_id == 3 & before_first_ISARIA == 0, 
+                          min(irmi, na.rm = TRUE), 
+                          .)))
+
+p1 %+% (data = input_tabelle_joined_from0_corrected) + aes(y=irmi)
+```
+
+
+## ISARIA -Daten am Ende der Kultur erweitern
+```{r, warning=FALSE}
+input_tabelle_joined_from0_corrected <- input_tabelle_joined_from0_corrected %>%
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    fill(c(ibi, irmi), .direction = "down")
+```
+
+### nFK vom Vortag als Input ausweisen:
+```{r}
+input_tabelle_joined_from0_corrected <- 
+    input_tabelle_joined_from0_corrected  %>%
+    mutate(across(c("B0020_nFK_prozent", "B2040_nFK_prozent", "B4060_nFK_prozent"),
+                  ~c(NA,.[1:(n()-1)]) ,
+                  .names = "{.col}_Vortag")
+    )
+```
+\
+### Wassereintrag aus P + Bewässerung berechnen. 
+```{r}
+input_tabelle_joined_from0_corrected <- input_tabelle_joined_from0_corrected %>% 
+    rowwise() %>%
+    mutate(wasser_input = sum(niederschlag_mm, bewaesserung_mm, na.rm = TRUE)) %>%
+    ungroup %>%
+    mutate(wasser_input_Vortag = c(NA,wasser_input[1:(n()-1)]))
+```
+
+
+####### FILTER Sätze und Wiederholungen!!!
+## Fehlmessungen filtern (vgl A1a PDF):
+```{r}
+#2022_S2 Wfull_plus komplett raus
+input_tabelle_joined_from0_corrected <- 
+    input_tabelle_joined_from0_corrected %>% 
+    filter(satz_id != 7 | variante_H2O != "Wfull_plus") %>% 
+    
+    #2022_S2 Wfull und Wred, jeweils Wdh d
+    filter(satz_id != 7 | !variante_H2O %in% c("Wfull", "Wred") | wiederholung != "d") %>%
+    
+    #2022_S3 Wfull_plus wdh c
+    filter(satz_id != 8 | !variante_H2O %in% c("Wfull_plus","Wfull") | wiederholung != "c")  %>%
+    filter(satz_id != 8 | !variante_H2O %in% c("Wred") | wiederholung != "a")  %>%
+    
+    #2023, Satz2 Wfull_plus komplett
+    filter(satz_id != 10 | variante_H2O != "Wfull_plus") %>% 
+    #2023, Satz2 Wfull+Wred jeweil wdh d
+    filter(satz_id != 10 | !variante_H2O %in% c("Wred","Wfull") | wiederholung != "d")  
+
+```
+
+#Benötigte Variablen selektieren.
+```{r}
+# für MLP:
+input_tabelle_final <- 
+    input_tabelle_joined_from0_corrected  %>%
+    #raus soll:
+    select(-before_first_ISARIA, -ibi_modelled, -irmi_modelled, -diff1,#-bewaesserung_id,
+           -niederschlag_mm, -bewaesserung_mm, 
+           #-wasser_input, belassen für LSTM
+           -FAO56_mm, -FAO56_mm_sum, -par_Wh_m2,  
+           #par_Wh_m2 raus, da bei vielen Stationen nicht enthalten
+           -starts_with("bodensaugspannung"), -starts_with("pf")
+    ) %>%
+    group_by(satz_id,variante_H2O, wiederholung) %>%
+    slice(-1) %>% ##somit werden alle ersten Werte pro Gruppe, und damit die NAs geläscht.
+    ungroup()%>%
+    #sortierung der Spalten:
+    select(satz_id, variante_H2O, wiederholung, contains("nFK"), !contains("nFK")) #%>% 
+# tidyr::drop_na() #für LSTM herausnehmen. Bis hierhin sind die Zeitreihen vollständig (alle Tage vorhanden)
+
+
+
+## für LSTM:
+# input_tabelle_joined_from0_corrected <-
+#     input_tabelle_joined_from0_corrected  %>%
+#     select(-niederschlag_mm, -bewaesserung_mm,
+#            -wetter_id, -FAO56_mm, -FAO56_mm_sum, -par_Wh_m2
+#     ) %>%
+#     #par_Wh_m2 raus, da bei vielen Stationen nicht enthalten
+#     select(satz_id, wiederholung, variante_H2O, contains("nFK"), !contains("nFK"))
+
+```
+
+
+## Gibt es NAs?
+Wenn ja, dann NAs approximieren, um vollständige Tabelle zu erhalten
+(gleiche Tabelle für MLP und LSTM)
+```{r}
+input_tabelle_final %>%
+    group_by(satz_id,variante_H2O, wiederholung) %>%
+    filter_all(any_vars(is.na(.)))
+
+## Keine NAs vorhanden!
+```
+
+# LSTM-Anpassung
+
+## Spalten wählen und NA entfernen: \\\ nicht mehr notwendig. Bereits oben erfolgt.
+```{r}
+# input_tabelle_joined_from0_corrected <- input_tabelle_joined_from0_corrected %>%
+#     select(-ends_with("Vortag"),  #ohne Vortag, da Zeitreihe nachträglich
+#            -starts_with(c("bodensaugspannung_","pf_"))) ### wird in LSTM-Script selected
+
+### bereits oben NAs entfernt
+# # NA passgenau entfernen:
+# input_tabelle_joined_from0_corrected <- input_tabelle_joined_from0_corrected %>%
+#     filter(if_all(ends_with("_nFK"), ~!is.na(.))) %>%
+#     filter(satz_id != 5 | tage_seit_aussaat <42) %>%
+#     filter(satz_id != 8 | tage_seit_aussaat <46)
+# # filter(if_any(everything(), ~is.na(.)))
+
+```
+
+## Wie groß sind die Intervalle?
+```{r}
+input_tabelle_final %>%
+    group_by(satz_id,variante_H2O, wiederholung) %>%
+    summarise(Intervall_tage = n(), .groups = "drop") %>% 
+    group_by(Intervall_tage) %>% summarise(Anzahl = n(), .groups = "drop")
+```
+
+## Gleiches Intervall für LSTM-Anni (14 Tage)
+
+```{r}
+##### ANDERS gelöst. Siehe nächster Chunk
+
+# i30plus <- input_tabelle_final %>%
+#     group_by(satz_id, variante_H2O, wiederholung) %>%
+#     mutate(id = cur_group_id(), .after = "variante_H2O") %>%
+#     group_by(id) %>%
+#     #select(-satz_id, -variante_H2O, -wiederholung) %>%
+#     mutate(nn = n()) %>% filter(nn >= 30)
+# 
+# # i14plus <- i1 %>% filter(between(nn,15, 30))
+# ##i30plus <- i1 %>% filter(nn > 30)
+# 
+# idx1 <- 1:14
+# idx2 <- max(idx1)-1
+# idx3 <- 10:23
+# 
+# list_df1 <- map_df(list(#"1"=i14plus,
+#     "2"=i30plus ),
+#     ~.x %>% slice(idx1) %>%
+#         mutate(nx = 1:n()), .id = "list_nr"
+# )
+# 
+# list_df2 <- map_df(list(#"3"=i14plus,
+#     "4"=i30plus ),
+#     ~.x %>% slice((n()-idx2):n()), .id = "list_nr"
+# )
+# 
+# list_df3 <- i30plus %>% slice(idx3) %>% mutate(list_nr = "5")
+# 
+# sliced_together <- bind_rows(list_df1, list_df2, list_df3) %>%
+#     group_by(list_nr, id) %>%
+#     mutate(id_all = cur_group_id(), .before = "list_nr") %>%
+#     group_by(id_all) %>%
+#     select(-list_nr, -id, -nn, -nx)
+# 
+# #sliced_together %>% group_by(id_all) %>% summarise(nn = n())
+# 
+# rm(list_df1, list_df2, list_df3, i1, i14plus, i30plus, idx1, idx2, idx3)
+```
+
+```{r, rows.print=20}
+x = 14 ## Intervall: Anzahl Tage
+y= x/2 ## halbes Itervall
+z = 1 ## Mittleres Intervall verschieben 
+
+input_tabelle_final_lstm_geeignet <- input_tabelle_final %>%
+    group_by(satz_id, variante_H2O, wiederholung) %>%
+    mutate(nn = n(), 
+           half = floor(nn/2),.before = "satz_id") %>%
+    slice(1:x,  #erstes Intervall
+          (floor(unique(nn)/2)-y+z):(floor(unique(nn)/2)+y-1+z), #zweites Intervall (mittleres)
+          ((n()-x+1):n()) # Letztes Intervall
+    ) %>% 
+    ungroup() %>%
+    mutate(id = rep(1:(n()/x), each = x), .before = "satz_id") %>% ##id anfügen, da nicht über Liste
+    select(-nn, -half)
+
+input_tabelle_final_lstm_geeignet
+```
+
+## Visuelle Prüfung:
+```{r}
+p1 <- ggplot(input_tabelle_final_lstm_geeignet %>% 
+                 select(satz_id, variante_H2O, wiederholung, tage_seit_aussaat, ends_with("nFK_prozent")) %>%
+                 pivot_longer(cols = ends_with("nFK_prozent")), 
+             aes(x = tage_seit_aussaat, y=value,
+                 col = variante_H2O, linetype = wiederholung)) + 
+    geom_line() + 
+    facet_grid(name~satz_id)
+
+p1
+
+p2 <- ggplot(input_tabelle_final_lstm_geeignet %>% 
+                 select(satz_id, variante_H2O, wiederholung, tage_seit_aussaat, ibi, irmi) %>% 
+                 pivot_longer(cols = ibi:irmi), 
+             aes(x = tage_seit_aussaat, y=value,
+                 col = variante_H2O, linetype = wiederholung)) + 
+    geom_line() + 
+    facet_grid(name~satz_id, scales = "free_y") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 6))
+p2
+```
+
+
+### Tabelle speichern on Projekt-Ordner für Daten
+```{r}
+### MLP
+# write.table(x = input_tabelle_final,
+#             file = paste0("../data/derived_data/",
+#                           "input_tabelle_2020_2023_20240403_20cm_complete.csv"),
+#             sep = ";",dec = ".", row.names = FALSE)
+
+
+# #LSTM
+# write.table(x = input_tabelle_final_lstm_geeignet,
+#             file = paste0("../data/derived_data/",
+#                           "input_tabelle_2020_2023_20240403_lstm_geeignet_20cm_complete.csv"),
+#             sep = ";",dec = ".", row.names = FALSE)
+```
