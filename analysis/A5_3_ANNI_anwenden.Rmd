@@ -1,0 +1,799 @@
+---
+title: "ANNI anwenden"
+---
+## Beispiel: Modell auf Praxis-Daten anwenden
+
+```{r, message=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(ggplot2)
+library(data.table)
+library(purrr)
+library(tidyr)
+library(viridis)
+library(ggpubr)
+library(ggfortify) # PCA
+```
+
+## Input-Parameter der sechs Modelle benennen
+```{r}
+names_y <- c(
+    "B0020_nFK_prozent", 
+    "B2040_nFK_prozent",
+    "B4060_nFK_prozent"
+)
+
+#Parameter MLP_exp und MLP_exp_tuned
+names_MLP_exp <- c("B0020_nFK_prozent_Vortag", "B2040_nFK_prozent_Vortag", "B4060_nFK_prozent_Vortag", "tage_seit_aussaat", "Tmean_gradC", "Tmean_th9_25_gradC", "Tmin_gradC", "Tmax_gradC", "relLuftfeuchte_mean_prozent", "globalstrahlung_Wh_m2", "windgeschwindigkeit_m_s", "tageslicht_h", "tageslicht_h_th9", "Tmean_gradC_sum", "Tmean_th9_25_gradC_sum", "globalstrahlung_Wh_m2_sum", "niederschlag_mm_sum", "tageslicht_h_sum", "tageslicht_h_th9_sum", "Ton_prozent", "Schluff_prozent", "Sand_prozent", "C_org_prozent", "ibi", "irmi", "wasser_input_Vortag" )
+
+#Parameter LSTM_exp und LSTM_exp_tuned
+names_LSTM_exp <- c("tage_seit_aussaat", "Tmean_gradC", "Tmean_th9_25_gradC", "Tmin_gradC", "Tmax_gradC", "relLuftfeuchte_mean_prozent", "relLuftfeuchte_min_prozent", "relLuftfeuchte_max_prozent", "globalstrahlung_Wh_m2", "windgeschwindigkeit_m_s", "tageslicht_h", "tageslicht_h_th9", "Tmean_gradC_sum", "Tmean_th9_25_gradC_sum", "globalstrahlung_Wh_m2_sum", "niederschlag_mm_sum", "tageslicht_h_sum", "tageslicht_h_th9_sum", "Ton_prozent", "Schluff_prozent", "Sand_prozent", "C_org_prozent", "ibi", "irmi", "wasser_input" )
+
+#Parameter AMBAV MLP und AMBAV LSTM
+names_AMVAB_LSTM <-c( "Tmean_gradC", "Tmean_th9_25_gradC", "Tmin_gradC", "Tmax_gradC", "relLuftfeuchte_mean_prozent", "globalstrahlung_Wh_m2", "windgeschwindigkeit_m_s", "tageslicht_h", "tageslicht_h_th9", "wasser_input")
+
+
+names_AMVAB_MLP <- c("B0020_nFK_prozent_Vortag", "B2040_nFK_prozent_Vortag", "B4060_nFK_prozent_Vortag", "Tmean_gradC", "Tmean_th9_25_gradC", "Tmin_gradC", "Tmax_gradC", "relLuftfeuchte_mean_prozent", "globalstrahlung_Wh_m2", "windgeschwindigkeit_m_s", "tageslicht_h", "tageslicht_h_th9", "wasser_input_Vortag" )
+
+
+## Alle Parameter in einen data.frame zusammenfügen und mit Nr. im Modell versehen
+# data.frame(parameter = names_MLP_exp) %>% mutate(MLP_exp = 1:n()) %>% 
+#     full_join(data.frame(parameter =names_LSTM_exp)  %>% mutate(LSTM_exp = 1:n()) ) %>%
+#     full_join(data.frame(parameter =names_AMVAB_LSTM)  %>% mutate(AMVAB_LSTM = 1:n()) ) %>%
+#     full_join(data.frame(parameter =names_AMVAB_MLP)  %>% mutate(AMVAB_MLP = 1:n()) ) 
+```
+
+```{r}
+n_past <- 7
+```
+
+
+## Daten einlesen (LSTM-Versionierung, enthält auch bereits Vortages-Werte)
+```{r}
+files2 <- c(
+    HGU =  "../data/derived_data/input_tabelle_2020_2023_20240403_lstm_geeignet_20cm_complete.csv",
+    DLR =  "../data/derived_data/input_tabelle_2020_2023_20240403_lstm_geeignet_20cm_complete_DLR.csv"
+)
+
+data0 <- map_df(files2, 
+                ~data.table::fread(.x, sep = ";", dec = "."), .id = "Ort"
+) %>% as_tibble() %>%
+    group_by(Ort, satz_id, variante_H2O, wiederholung) %>%
+    mutate(id_all = cur_group_id() )%>%#, .after = "id") %>%
+    ungroup() %>%
+    arrange(id_all, tage_seit_aussaat) %>%
+    select(-id) %>% ###### für vollständige ZEitreihen
+    distinct() ## s.o.
+```
+
+
+# Modelle einlesen
+```{r, message=FALSE, warning=FALSE}
+path0 <- "../data/derived_data/Models_paper/"
+X1 <- load_model_tf(paste0(path0, "X1_Model1_MLP_experimental_data/"))
+X2 <- load_model_tf(paste0(path0, "X2_Model2_LSTM_experimental_data/"))
+X3 <- load_model_tf(paste0(path0, "X3_2_Model3_1a_MPL_pretrained_AMBAV_meteo/"))
+X4 <- load_model_tf(paste0(path0, "X4_2_Model3_1b_MLP_tuned_experimental_data/"))
+X5 <- load_model_tf(paste0(path0, "X5_Model3_2a_LSTM_pretrained_AMBAV/"))
+X6 <- load_model_tf(paste0(path0, "X6_Model3_2b_LSTM_pretrained2_experimental_data/"))
+```
+##Sequenzierungs-Funktion für LSTM:
+```{r}
+source("../analysis/Functions/sequence_generator.R")
+```
+
+
+## Daten skalieren
+## Skalierungs-Daten einlesen:
+```{r}
+scaling_data <- fread("../data/derived_data/Models_paper/All_scaling_data_20230328.csv")
+
+names_all <- scaling_data$parameter
+m <- scaling_data$m
+s <- scaling_data$s
+
+names(m) <- names_all
+names(s) <- names_all
+```
+
+
+```{r}
+col_values <- c( "Measured data" = 1, 
+                 "X1_MLP_exp" = 2, 
+                 "X2_LSTM_exp" = 3, 
+                 "X3_MLP_AMBAV" = 4, 
+                 "X4_MLP_tuned" = 5, 
+                 "X5_LSTM_AMBAV" = 6, 
+                 "X6_LSTM_tuned" = 7, 
+                 "Ensemble 1" = 1,
+                 "Ensemble 2" = 1,
+                 "Ensemble 3" = 1,
+                 "Ensemble model" = 1)
+```
+
+# ANNI1: predictions ohne Iteration, sondern alles auf einmal:
+```{r}
+anni1 <- function(data_beispiel,...){
+    nn <- 1:3  
+    n_past <- 7
+    batch_size <- 1 
+    
+    nn_lstm <- nrow(data_beispiel) - n_past # NROW(predictions_anni_X2_V)
+    nn_mlp <- nrow(satz_scaled_X1)
+    
+    #X1: MLP exp
+    predictions_anni_X1_V <- X1 %>% predict(satz_scaled_X1, stateful = FALSE, verbose = 0)
+    
+    #X3:  MLP AMBAV
+    predictions_anni_X3_V <- X3 %>% predict(satz_scaled_X3, stateful = FALSE, verbose = 0)
+    
+    #X4: MLP tuned
+    predictions_anni_X4_V <- X4 %>% predict(satz_scaled_X4, stateful = FALSE, verbose = 0)
+    
+    #X2: ## LSTM exp
+    satz_scaled_X2_sequence <- to_sequence(.data = satz_scaled_X2,
+                                           spalte_y = names_y, 
+                                           spalte_x = c(names_y, names_LSTM_exp), 
+                                           n_future = 1, 
+                                           n_past = n_past)$x
+    
+    X2_tensor <- keras::k_reshape(satz_scaled_X2_sequence, shape = c(nn_lstm,n_past, NCOL(satz_scaled_X2_sequence)))
+    predictions_anni_X2_V <- X2 %>% predict(X2_tensor, batch_size = batch_size, stateful = TRUE, verbose = 0) 
+    
+    #X2: ## LSTM AMBAV
+    satz_scaled_X5_sequence <- to_sequence(.data = satz_scaled_X5,
+                                           spalte_y = names_y, 
+                                           spalte_x = c(names_y, names_AMVAB_LSTM), 
+                                           n_future = 1, 
+                                           n_past = n_past)$x
+    
+    X5_tensor <- keras::k_reshape(satz_scaled_X5_sequence, shape = c(nn_lstm,n_past, NCOL(satz_scaled_X5_sequence)))
+    predictions_anni_X5_V <- X5 %>% predict(X5_tensor, batch_size = batch_size, stateful = TRUE, verbose = 0) 
+    
+    #X6: ## LSTM tuned
+    satz_scaled_X6_sequence <- to_sequence(.data = satz_scaled_X6,
+                                           spalte_y = names_y, 
+                                           spalte_x = c(names_y, names_LSTM_exp), 
+                                           n_future = 1, 
+                                           n_past = n_past)$x
+    
+    X6_tensor <- keras::k_reshape(satz_scaled_X6_sequence, shape = c(nn_lstm,n_past, NCOL(satz_scaled_X6_sequence)))
+    predictions_anni_X6_V <- X6 %>% predict(X6_tensor, batch_size = batch_size, stateful = TRUE, verbose = 0) 
+    
+    #Output:
+    list(predictions_anni_X1_V,
+         predictions_anni_X2_V,
+         predictions_anni_X3_V,
+         predictions_anni_X4_V,
+         predictions_anni_X5_V,
+         predictions_anni_X6_V)
+    
+}
+```
+
+
+#Skalieren des Outputs für Input-Schleife (da nicht exakt selbe scaling Parameter)
+```{r}
+rere_scale <- function(x){ ## architecture nur für MLP notwendig. LSTM hat selbes Level (Y)
+    # names_x <- if (architecture == "MLP"){names_MLP_exp}
+    out1 <- scale(matrix((x * s[names_y] + m[names_y]), nrow = 1),
+                  center = m[c(names_MLP_exp)][1:3],
+                  scale = s[c(names_MLP_exp)][1:3])
+    attributes(out1) <- NULL
+    out1
+}
+
+#rere_scale(x = c(1,2,3))
+#rere_scale(x = matrix(c(1,2,3), nrow = 1))
+```
+
+
+### ANNI anwenden 2: alle Modelle nacheinander
+```{r, warning=FALSE}
+# Hinweis: in dieser Version ist Y bereits skaliert und kann daher genauso einfließen!
+anni2 <- function(data_beispiel,...){
+    nn <- 1:3  #which(names(satz_scaled) == "nFK_..._Vortag")
+    batch_size <- 1 #16
+    
+    predictions_anni_X1 <- matrix(ncol = 3, nrow = nrow(data_beispiel)) ## MLP exp
+    predictions_anni_X2 <- matrix(ncol = 3, nrow = nrow(data_beispiel) - n_past) ## LSTM exp
+    predictions_anni_X3 <- matrix(ncol = 3, nrow = nrow(data_beispiel)) ## MLP AMBAV
+    predictions_anni_X4 <- matrix(ncol = 3, nrow = nrow(data_beispiel))  ##MLP tuned
+    predictions_anni_X5 <- matrix(ncol = 3, nrow = nrow(data_beispiel) - n_past) ## LSTM AMBAV
+    predictions_anni_X6 <- matrix(ncol = 3, nrow = nrow(data_beispiel) - n_past) ## LSTM tuned
+    
+    nn_lstm <- NROW(predictions_anni_X2)
+    nn_mlp <- nrow(satz_scaled_X1)
+    
+    for (i in 1:(nrow(data_beispiel)-1)){
+        # X1: MLP exp
+        predictions_anni_X1[i,] <- X1 %>%
+            predict(x = matrix(nrow = 1, satz_scaled_X1[i,]), verbose = 0)
+        satz_scaled_X1[i+1,nn] <- (predictions_anni_X1[i,nn] %>% rere_scale)
+        
+        ## X3: MLP AMBAV meteo
+        predictions_anni_X3[i,] <- X3 %>%
+            predict(x = matrix(nrow = 1, satz_scaled_X3[i,]), verbose = 0)
+        satz_scaled_X3[i+1,nn] <- (predictions_anni_X3[i,nn] %>% rere_scale)
+        
+        ## X4: MLP tuned
+        predictions_anni_X4[i,] <- X4 %>%
+            predict(x = matrix(nrow = 1, satz_scaled_X4[i,]), verbose = 0)
+        satz_scaled_X4[i+1,nn] <- (predictions_anni_X4[i,nn] %>% rere_scale)
+        
+        
+        ## X2: LSTM exp
+        if(i <= nn_lstm){ ## weniger Einträge, da LSTM 7 Tage rückwirkend benötigt
+            X2_tensor <- keras::k_reshape(satz_scaled_X2[(1:n_past)+i-1,], 
+                                          shape = c(1,n_past, NCOL(satz_scaled_X2)))
+            predictions_anni_X2[i,] <- X2 %>%
+                predict(X2_tensor, batch_size = 1, stateful = TRUE, verbose = 0)
+            satz_scaled_X2[n_past+i,nn] <- predictions_anni_X2[i,nn]
+            
+            # ## X5: LSTM AMBAV   
+            X5_tensor <- keras::k_reshape(satz_scaled_X5[(1:n_past)+i-1,], 
+                                          shape = c(1,n_past, NCOL(satz_scaled_X5)))
+            predictions_anni_X5[i,] <- X5 %>%
+                predict(X5_tensor, batch_size = 1, stateful = TRUE, verbose = 0)
+            satz_scaled_X5[n_past+i,nn] <- predictions_anni_X5[i,nn]
+            
+            
+            ## X6: LSTM tuned
+            X6_tensor <- keras::k_reshape(satz_scaled_X6[(1:n_past)+i-1,], 
+                                          shape = c(1,n_past, NCOL(satz_scaled_X6)))
+            predictions_anni_X6[i,] <- X6 %>%
+                predict(X6_tensor, batch_size = 1, stateful = TRUE, verbose = 0)
+            satz_scaled_X6[n_past+i,nn] <- predictions_anni_X6[i,nn]
+            
+        }
+        
+        # k_clear_session()
+    }
+    
+    rm(X2_tensor, X5_tensor, X6_tensor)
+    
+    k_clear_session() #außerhalb des Loops
+    
+    #Output:
+    list(predictions_anni_X1,
+         predictions_anni_X2,
+         predictions_anni_X3,
+         predictions_anni_X4,
+         predictions_anni_X5,
+         predictions_anni_X6)
+}
+```
+
+### ANNI anwenden 3: Modelle mit Mittelwert
+```{r, eval=TRUE}
+anni3 <- function(data_beispiel,...){
+    nn <- 1:3  
+    n_past <- 7
+    batch_size <- 1 
+    
+    predictions_anni_X1_M <- matrix(ncol = 3, nrow = nrow(data_beispiel)) ## MLP exp
+    predictions_anni_X2_M <- matrix(ncol = 3, nrow = nrow(data_beispiel) - n_past) ## LSTM exp
+    predictions_anni_X3_M <- matrix(ncol = 3, nrow = nrow(data_beispiel)) ## MLP AMBAV
+    predictions_anni_X4_M <- matrix(ncol = 3, nrow = nrow(data_beispiel))  ##MLP tuned
+    predictions_anni_X5_M <- matrix(ncol = 3, nrow = nrow(data_beispiel) - n_past) ## LSTM AMBAV
+    predictions_anni_X6_M <- matrix(ncol = 3, nrow = nrow(data_beispiel) - n_past) ## LSTM tuned
+    
+    nn_lstm <- NROW(predictions_anni_X2_M)
+    nn_mlp <- nrow(satz_scaled_X1)
+    
+    for (i in 1:(nrow(data_beispiel)-1)){
+        # X1: MLP exp
+        predictions_anni_X1_M[i,] <- X1 %>%
+            predict(x = matrix(nrow = 1, satz_scaled_X1[i,]), verbose = 0)
+        
+        ## X3: MLP AMBAV meteo
+        predictions_anni_X3_M[i,] <- X3 %>%
+            predict(x = matrix(nrow = 1, satz_scaled_X3[i,]), verbose = 0)
+        
+        ## X4: MLP tuned
+        predictions_anni_X4_M[i,] <- X4 %>%
+            predict(x = matrix(nrow = 1, satz_scaled_X4[i,]), verbose = 0)
+        
+        
+        ## X2: LSTM exp
+        if(i <= nn_lstm){ ## weniger Einträge, da LSTM 7 Tage rückwirkend benötigt
+            X2_tensor <- keras::k_reshape(satz_scaled_X2[(1:n_past)+i-1,], 
+                                          shape = c(1,n_past, NCOL(satz_scaled_X2)))
+            predictions_anni_X2_M[i,] <- X2 %>%
+                predict(X2_tensor, batch_size = 1, stateful = TRUE, verbose = 0)
+            
+            # ## X5: LSTM AMBAV   
+            X5_tensor <- keras::k_reshape(satz_scaled_X5[(1:n_past)+i-1,], 
+                                          shape = c(1,n_past, NCOL(satz_scaled_X5)))
+            predictions_anni_X5_M[i,] <- X5 %>%
+                predict(X5_tensor, batch_size = 1, stateful = TRUE, verbose = 0)
+            
+            ## X6: LSTM tuned
+            X6_tensor <- keras::k_reshape(satz_scaled_X6[(1:n_past)+i-1,], 
+                                          shape = c(1,n_past, NCOL(satz_scaled_X6)))
+            predictions_anni_X6_M[i,] <- X6 %>%
+                predict(X6_tensor, batch_size = 1, stateful = TRUE, verbose = 0)
+        }
+        
+        ## Means erstellen
+        if(i <= nn_lstm){
+            pred_means <- colMeans(matrix(c(
+                predictions_anni_X1_M[i,],
+                predictions_anni_X2_M[i,],
+                ##  predictions_anni_X3_M[i,], AMBAV herausnehmen
+                predictions_anni_X4_M[i,],
+                ##  predictions_anni_X5_M[i,], AMBAV herausnehmen
+                predictions_anni_X6_M[i,]), ncol = 3, byrow = T))
+            
+            satz_scaled_X2[n_past+i,nn] <- pred_means
+            satz_scaled_X5[n_past+i,nn] <- pred_means
+            satz_scaled_X6[n_past+i,nn] <- pred_means
+            
+            
+        } else {
+            pred_means <- colMeans(matrix(c(
+                predictions_anni_X1_M[i,],
+                ## predictions_anni_X3_M[i,], AMBAV herausnehmen
+                predictions_anni_X4_M[i,]), ncol = 3, byrow = T))
+        }
+        
+        satz_scaled_X1[i+1,nn] <- pred_means
+        satz_scaled_X3[i+1,nn] <- pred_means
+        satz_scaled_X4[i+1,nn] <- pred_means
+        
+        k_clear_session()
+    }
+    
+    rm(X2_tensor, X5_tensor, X6_tensor, pred_means)
+    
+    #Output:
+    list(predictions_anni_X1_M,
+         predictions_anni_X2_M,
+         predictions_anni_X3_M,
+         predictions_anni_X4_M,
+         predictions_anni_X5_M,
+         predictions_anni_X6_M)
+}
+```
+
+
+
+
+### Ergebnis rück-skalieren und plotten
+```{r, warning=FALSE}
+#rescale to normal nFK-values:
+func_result_df <- function(pred_X1, pred_X2, pred_X3, pred_X4, pred_X5, pred_X6,...){
+    nn_lstm <- NROW(pred_X2)
+    nn_mlp <- nrow(satz_scaled_X1)
+    
+    sy <- matrix(s[names_y], nrow = nrow(data_beispiel), ncol = length(names_y), byrow = T)
+    my <- matrix(m[names_y], nrow = nrow(data_beispiel), ncol = length(names_y), byrow = T)
+    predictions_anni_X1_rescaled <- pred_X1 * sy + my
+    predictions_anni_X2_rescaled <- pred_X2 * sy[1:nn_lstm] + my[1:nn_lstm]
+    predictions_anni_X3_rescaled <- pred_X3 * sy + my
+    predictions_anni_X4_rescaled <- pred_X4 * sy + my
+    predictions_anni_X5_rescaled <- pred_X5 * sy[1:nn_lstm] + my[1:nn_lstm]
+    predictions_anni_X6_rescaled <- pred_X6 * sy[1:nn_lstm] + my[1:nn_lstm]
+    
+    
+    pred_result_formatted <- function(pred_df, nn_x){
+        y2 <- pred_df[-NROW(pred_df),] %>% as.data.frame() %>%
+            mutate(tage_seit_aussaat =
+                       data_beispiel$tage_seit_aussaat[-c(1:nn_x)]
+            ) %>%
+            tidyr::pivot_longer(cols = -tage_seit_aussaat,
+                                values_to = "predicted_nFK",  names_to = "depth")
+        
+        result1 <- #100% nFK für Tag 1 anfügen:
+            bind_rows(data.frame(tage_seit_aussaat =  min(data_beispiel$tage_seit_aussaat),
+                                 depth = unique(y2$depth),
+                                 predicted_nFK = NA #100
+            ),
+            y2) %>%
+            mutate_at("depth", ~factor(., labels = c("nFK_0020", "nFK_2040", "nFK_4060"))) %>%
+            mutate_at("predicted_nFK", ~round(., 2))
+        result1
+    }
+    
+    result_df_out <- map2_df(.x = list("X1_MLP_exp" = predictions_anni_X1_rescaled,
+                                       "X2_LSTM_exp" = predictions_anni_X2_rescaled, 
+                                       "X3_MLP_AMBAV" = predictions_anni_X3_rescaled,
+                                       "X4_MLP_tuned" = predictions_anni_X4_rescaled,
+                                       "X5_LSTM_AMBAV" = predictions_anni_X5_rescaled,
+                                       "X6_LSTM_tuned" = predictions_anni_X6_rescaled), 
+                             .y = list(1, (n_past+1), 1, 1, (n_past+1), (n_past+1)),
+                             ~pred_result_formatted(pred_df = .x, nn_x = .y), .id = "modelX"
+    )
+    
+    result_df_out
+}
+```
+
+# Funktion: Differenz der sechs Modelle zur measureden nFK
+```{r, warning=FALSE}
+func_data_long_ensemble <- function(.data, name_mean,...){
+    data_beispiel_long <- data_beispiel %>% 
+        select(tage_seit_aussaat, ends_with("nFK_prozent")) %>%
+        pivot_longer(cols = ends_with("nFK_prozent"), 
+                     names_to = "depth", values_to = "measured_nFK" ) %>%
+        mutate(across(depth, ~factor(., labels = c("nFK_0020", "nFK_2040", "nFK_4060"))))
+    
+    df_result_diffs <- .data %>% 
+        left_join(data_beispiel_long, by = c("depth", "tage_seit_aussaat")) %>%
+        mutate(nfk_diff = predicted_nFK - measured_nFK)
+    
+    df_ensemble1 <- df_result_diffs %>% group_by(tage_seit_aussaat, depth) %>%
+        summarise(across(nfk_diff, ~mean(.)), .groups = "drop") %>%
+        mutate(modelX = name_mean)
+    
+    return(list(df_result_diffs=df_result_diffs,df_ensemble1=df_ensemble1))
+}
+```
+
+
+```{r}
+## Im For-Loop: alle Zeitreihen laufen lassen!
+
+run_all_ANNI_models <- function(i){
+    data_beispiel <<- data0 %>% filter(id_all == i)
+    
+    ## Nur eine ausgewählte Zeitreihe laufen lassen:
+    # data_beispiel <- data0 %>% 
+    #     # filter(satz_id == 8 & variante_H2O == "Wfull" & wiederholung == "a") %>% 
+    #     # filter(satz_id == 5 & variante_H2O == "Wfull" & wiederholung == "a") %>% 
+    #     filter(satz_id == 3 & variante_H2O == "Wfull" & wiederholung == "a") %>% #passt!
+    #     select(-id) %>% 
+    #     distinct() 
+    
+    ## Daten insgesamt skalieren
+    data_scaled_all <<- scale(as.matrix(data_beispiel[,c(names_all)]), 
+                              center = m[c(names_all)],
+                              scale = s[c(names_all)])
+    
+    # Skalierte Daten für einelne Modelle auswählen
+    satz_scaled_X1 <<- data_scaled_all[,c(names_MLP_exp)]             ##MLP exp
+    satz_scaled_X2 <<- data_scaled_all[,c(names_y, names_LSTM_exp)]   ##LSTM exp
+    satz_scaled_X3 <<- data_scaled_all[,c(names_AMVAB_MLP)]           ##MLP AMBAV meteo
+    satz_scaled_X4 <<- satz_scaled_X1                                 ##MLP tuned
+    satz_scaled_X5 <<- data_scaled_all[,c(names_y,names_AMVAB_LSTM)]  ##LSTM AMBAV  
+    satz_scaled_X6 <<- satz_scaled_X2                                 ##LSTM tuned
+    
+    # #Y auf NA setzen
+    # satz_scaled_X1[2:NROW(satz_scaled_X1),1:3] <- NA #MLPs
+    # satz_scaled_X3[2:NROW(satz_scaled_X3),1:3] <- NA
+    # satz_scaled_X4[2:NROW(satz_scaled_X4),1:3] <- NA
+    # satz_scaled_X2[8:NROW(satz_scaled_X2),1:3] <- NA #LSTMs
+    # satz_scaled_X5[8:NROW(satz_scaled_X5),1:3] <- NA
+    # satz_scaled_X6[8:NROW(satz_scaled_X6),1:3] <- NA
+    
+    # #ANNI anwenden   
+    A1_res <- anni1(data_beispiel)
+    A2_res <- anni2(data_beispiel)
+    A3_res <- anni3(data_beispiel)
+    
+    #Ergebnisse rückskalieren:
+    result_df_ANNI1 <- func_result_df(pred_X1 = A1_res[[1]],
+                                      pred_X2 = A1_res[[2]],
+                                      pred_X3 = A1_res[[3]],
+                                      pred_X4 = A1_res[[4]],
+                                      pred_X5 = A1_res[[5]],
+                                      pred_X6 = A1_res[[6]])
+    
+    result_df_ANNI2 <- func_result_df(pred_X1 = A2_res[[1]],
+                                      pred_X2 = A2_res[[2]],
+                                      pred_X3 = A2_res[[3]],
+                                      pred_X4 = A2_res[[4]],
+                                      pred_X5 = A2_res[[5]],
+                                      pred_X6 = A2_res[[6]])
+    
+    result_df_ANNI3 <- func_result_df(pred_X1 = A3_res[[1]],
+                                      pred_X2 = A3_res[[2]],
+                                      pred_X3 = A3_res[[3]],
+                                      pred_X4 = A3_res[[4]],
+                                      pred_X5 = A3_res[[5]],
+                                      pred_X6 = A3_res[[6]])
+    
+    #Differenzen zu gemessener nFK berechnen:
+    df_diffs_ANNI1 <- func_data_long_ensemble(.data = result_df_ANNI1, name_mean = "Ensemble 1")
+    df_diffs_ANNI2 <- func_data_long_ensemble(.data = result_df_ANNI2, name_mean = "Ensemble 2")
+    df_diffs_ANNI3 <- func_data_long_ensemble(.data = result_df_ANNI3, name_mean = "Ensemble 3")
+    
+    print(i)
+    
+    list(data_beispiel=data_beispiel,
+         result_df_ANNI1=result_df_ANNI1,
+         result_df_ANNI2=result_df_ANNI2,
+         result_df_ANNI3=result_df_ANNI3,
+         df_diffs_ANNI1=df_diffs_ANNI1,
+         df_diffs_ANNI2=df_diffs_ANNI2,
+         df_diffs_ANNI3=df_diffs_ANNI3)
+    
+} # Ende von Funktion
+```
+
+
+
+
+## Für alle Zeitreihen anwenden:
+```{r}
+# rm(df_all_results)
+df_all_results <- map(unique(data0$id_all),#[1:10], 
+                      ~run_all_ANNI_models(i = .x))
+```
+## speichern der Gesamt-Ergebnis-Tabelle
+```{r}
+path_save_rds <- "../../ANNI/data/derived_data/Models_paper/df_all_results.rsd"
+#saveRDS(object = df_all_results, file = path_save_rds)
+
+# Alternativ: bereits erstellte Tabelle einlesen:
+df_all_results <- readRDS(path_save_rds)
+```
+
+
+
+## Plot der absoluten nFK-Werte
+```{r, warning=FALSE}
+func_plot_1 <- function(.data, name_mean, .x){
+    
+    df_raw <- data0 %>% filter(id_all ==.x)
+    
+    plot_ANNI_results <- ggplot(data = .data, aes(tage_seit_aussaat-1, 
+                                                  predicted_nFK,col = modelX)) + 
+        # measurede nFK:
+        geom_line(data = df_raw %>%
+                      select(tage_seit_aussaat, ends_with("nFK_prozent")) %>%
+                      tidyr::pivot_longer(cols = -tage_seit_aussaat,  
+                                          values_to = "predicted_nFK", names_to = "depth") %>% 
+                      mutate_at("depth", 
+                                ~factor(., labels = c("nFK_0020", "nFK_2040", "nFK_4060"))),
+                  aes(tage_seit_aussaat, predicted_nFK,col = "measured"), 
+                  linewidth = 1, linetype = 1) + #lineype = 6
+        # ANNI-Modelle X1-X6:
+        geom_line() +   
+        # Ensemble plotten:
+        stat_summary(geom = "line", fun = "mean", aes(col = name_mean)) + 
+        # geom_col(data = df_raw, aes(tage_seit_aussaat, wasser_input_Vortag), 
+        #          fill = "lightblue", col =NA) + 
+        theme_bw() + 
+        theme(panel.grid = element_blank()) + 
+        scale_color_manual("Modell", values = col_values) +
+        scale_x_continuous("Days after sowing", 
+                           limits = range(df_raw$tage_seit_aussaat)) +
+        scale_y_continuous("AWC (%)", limits = c(0,100)) + 
+        facet_grid(depth~.)
+    
+    plot_ANNI_results
+}
+```
+
+
+# Plots der modellierten nFK im Zeitverlauf (+gemessen + Ensemble). Beide Versionen
+```{r, warning=FALSE}
+p_list1 <- map(1:length(df_all_results), 
+               ~func_plot_1(.data = df_all_results[[.x]]$result_df, #wenn im Skript erstellt: result_df_ANNI1
+                            name_mean = "Ensemble 1", .x = .x)
+)
+p_list2 <- map(1:length(df_all_results), 
+               ~func_plot_1(.data = df_all_results[[.x]]$result_df_ANNI2, 
+                            name_mean = "Ensemble 2", .x = .x)
+)
+p_list3 <- map(1:length(df_all_results), 
+               ~func_plot_1(.data = df_all_results[[.x]]$result_df_ANNI3, 
+                            name_mean = "Ensemble 3", .x = .x)
+)
+## Alle 3 Plots zusammenfügen
+p_list_zusammen <- map(
+    .x = (1:length(p_list1)),
+    ~ggpubr::ggarrange(plotlist = list(p_list1[[.x]], p_list2[[.x]], p_list3[[.x]]),
+                       common.legend = T, legend = "right", labels = "AUTO", nrow = 1) + 
+        theme(aspect.ratio = 0.6)
+)
+# p_list_zusammen
+p_list_zusammen[[5]]
+```
+
+## Plot representative timeseries:
+```{r}
+rep_series <- 70
+
+df_zusammen <- bind_rows("A" = df_all_results[[rep_series]]$result_df, #result_df_ANNI1,
+                         "B" = df_all_results[[rep_series]]$result_df_ANNI2,
+                         "C" = df_all_results[[rep_series]]$result_df_ANNI3, .id = "version_anni")
+
+df_raw <- data0 %>% filter(id_all ==rep_series)
+
+anni_labs <- as_labeller(c("A"="A", "B"="B", "C"="C",
+                           "nFK_0020"="0-20 cm", "nFK_2040" = "20-40 cm", "nFK_4060"= "40-60 cm"))
+
+plot_ANNI_results <- ggplot(data = df_zusammen, aes(tage_seit_aussaat-1, 
+                                                    predicted_nFK,col = modelX)) + 
+    # measurede nFK:
+    geom_line(data = df_raw %>%
+                  select(tage_seit_aussaat, ends_with("nFK_prozent")) %>%
+                  tidyr::pivot_longer(cols = -tage_seit_aussaat,  
+                                      values_to = "predicted_nFK", names_to = "depth") %>% 
+                  mutate_at("depth", 
+                            ~factor(., labels = c("nFK_0020", "nFK_2040", "nFK_4060"))),
+              aes(tage_seit_aussaat, predicted_nFK,col = "Measured data"), 
+              linewidth = 0.7, linetype = 1) + #lineype = 6
+    # ANNI-Modelle X1-X6:
+    geom_line() +   
+    # Ensemble plotten:
+    stat_summary(geom = "line", fun = "mean", aes(col = "Ensemble model"), linetype = 2, size = 0.5) + 
+    theme_bw() + 
+    theme(panel.grid = element_blank()) + 
+    scale_color_manual("Model", values = col_values) +
+    scale_x_continuous("Days after sowing", 
+                       limits = range(df_raw$tage_seit_aussaat)) +
+    scale_y_continuous("AWC (%)", limits = c(0,100)) + 
+    facet_grid(depth~version_anni, labeller = anni_labs)
+plot_ANNI_results
+```
+
+```{r}
+# ggsave(plot = plot_ANNI_results, filename ="../data/derived_data/Models_paper/Ensemble_plot.png", 
+#        device = "png", width = 6, height = 4, scale = 1.2)
+```
+
+
+
+## Plots der Differenzen (nFK_gemessen - nFK_modelliert)
+```{r, warning=FALSE}
+func_plot_2_diffs <- function(.data, target = ""){
+    ggplot(data = .data[[target]]$df_result_diffs, aes(tage_seit_aussaat-1, nfk_diff,col = modelX)) + 
+        geom_hline(yintercept = 0, col = "gray", show.legend = T) +  # 0-Linie:  linetype = 6
+        geom_line() + # ANNI-Modelle X1-X6:
+        geom_line(data = .data[[target]]$df_ensemble1, linewidth = 0.9) + 
+        theme_bw() + 
+        theme(panel.grid = element_blank()) + 
+        scale_color_manual("Modell", values = col_values) +
+        scale_x_continuous("Days after Sowing", 
+                           limits = range(.data$data_beispiel$tage_seit_aussaat)) +
+        facet_grid(depth~.)
+}
+
+p_list_diff1 <- map(df_all_results, ~func_plot_2_diffs(.data = ., target = "df_diffs_ANNI1"))
+p_list_diff2 <- map(df_all_results, ~func_plot_2_diffs(.data = ., target = "df_diffs_ANNI2"))
+p_list_diff3 <- map(df_all_results, ~func_plot_2_diffs(.data = ., target = "df_diffs_ANNI3"))
+
+## Alle 3 Plots zusammenfügen
+p_list_zusammen_diffs <- map(
+    .x = (1:length(p_list1)),
+    ~ggpubr::ggarrange(plotlist = list(p_list_diff1[[.x]], p_list_diff2[[.x]], p_list_diff3[[.x]]),
+                       common.legend = T, legend = "bottom", labels = "AUTO", nrow = 1) + 
+        theme(aspect.ratio = 0.6)
+)
+
+p_list_zusammen_diffs
+```
+
+
+Hinweis für Discussion: gleiche Architektur in Pretrained mit Mittelwerten der fehleneden Parameter erstellen funktioniert nicht! Da mehrere Layer...und Gewichte dann Fehler einführen.
+
+Ensemble für mittelwert am Ende und Ensemble 2 für iterativen Mittelwert nehmen!
+
+
+
+
+## Facet-Plot: X=modelX, Y=value, col = nfk-Differenz, Panels für jeden Input-Parameter
+```{r}
+# df_result2_ANNI2$df_result_diffs  %>% #ensemle ist in anderer Liste
+#     left_join(data_beispiel, by = "tage_seit_aussaat") %>%
+#     mutate(across(modelX, ~substr(., 1,2))) %>%
+#     select(-zeit_messung, -Ort, -satz_id, -variante_H2O, -wiederholung, -id_all) %>%
+#     filter(depth == "nFK_0020") %>%
+#     pivot_longer(cols = c(is.numeric, -nfk_diff), 
+#                  names_to = "parameter1", values_to = "value1") %>%
+#     ggplot(aes(x=modelX, y = value1)) +
+#     geom_point(aes(col = nfk_diff)) +
+#     scale_color_viridis(discrete=FALSE) + 
+#     # geom_tile(aes(fill = nfk_diff)) + #, position = position_dodge()
+#     # scale_fill_viridis(discrete=FALSE) + 
+#     facet_wrap(.~parameter1, scales = "free") + 
+#     theme_bw() + 
+#     theme(panel.grid = element_blank())
+```
+
+## Scatter-Plot 2 metrische Variablen, facets sind ModelleX und Tiefe
+```{r}
+# map_df(df_all_results, ~.$df_result2_ANNI2$df_result_diffs, .id = "id2") %>%
+#     #df_result2_ANNI2$df_result_diffs  %>% #ensemle ist in anderer Liste
+#     left_join(data_beispiel, by = "tage_seit_aussaat") %>%
+#     ggplot() +
+#     geom_point(aes(x=B0020_nFK_prozent_Vortag, y=wasser_input_Vortag, col = nfk_diff)) +
+#     facet_grid(modelX~depth) +
+#     theme_bw() +
+#     theme(panel.grid = element_blank(),
+#           aspect.ratio = 0.5) +
+#     scale_color_viridis(discrete=FALSE)
+```
+
+## PCA der 6 Modell-Ergebnisse: Differenzen zur gemessenen nFK
+```{r}
+pca_ANNI_error <- function(anni_version){
+    df1 <- #df_result2_ANNI2$df_result_diffs  %>% # nur eine ZEitreihe #ensemle ist in anderer Liste
+        map_df(df_all_results, ~.[[anni_version]]$df_result_diffs, .id = "id2") %>% # alle durchlaufenen Zeitreihen
+        pivot_wider(id_cols = c(id2, tage_seit_aussaat, depth), names_from = modelX, values_from = nfk_diff) %>%
+        drop_na()
+    df2 <- df1 %>%
+        select(starts_with("X"))
+    
+    pca_res <- prcomp(df2, scale. = TRUE)
+    
+    ##Output:
+    autoplot(pca_res, data = df1, colour = 'depth',  loadings = TRUE, loadings.label = TRUE,
+             loadings.colour = 'grey40', loadings.label.colour = "grey40", loadings.label.size = 4,
+             frame = TRUE, frame.type = 'norm') +
+        theme_bw() + 
+        theme(aspect.ratio = 1,
+              panel.grid = element_blank(),
+              text = element_text(size = 12))
+}
+
+pca1 <- pca_ANNI_error(anni_version = "df_diffs_ANNI1") 
+pca2 <- pca_ANNI_error(anni_version = "df_diffs_ANNI2") 
+pca3 <- pca_ANNI_error(anni_version = "df_diffs_ANNI3") 
+
+## Alle 3 PCAs zusammenfügen
+ggpubr::ggarrange(plotlist = list(pca1, pca2, pca3), nrow = 1, common.legend = T, 
+                  legend = "bottom", labels = "AUTO") + theme(aspect.ratio = 0.5)
+```
+```{r}
+pca1_save <- pca1 + scale_x_continuous(limits = c(-0.15, 0.15)) +
+    scale_y_continuous(limits = c(-0.15, 0.15)) + 
+    scale_color_manual("Soil depth", breaks = c("nFK_0020", "nFK_2040", "nFK_4060"),
+                       labels = c("0-20 cm", "20-40 cm", "40-60 cm"),
+                       values = 2:4) +
+    scale_fill_manual("Soil depth", breaks = c("nFK_0020", "nFK_2040", "nFK_4060"),
+                      labels = c("0-20 cm", "20-40 cm", "40-60 cm"),
+                      values = 2:4) + 
+    theme(legend.position = c(0.15, 0.15), legend.background = element_rect(colour = "grey60"))
+pca1_save
+```
+
+```{r}
+# ggsave(plot = pca1_save, filename = "~/Downloads/pca.png", device = "png", 
+#        width = 4, height = 4, scale = 1.2)
+```
+
+
+
+# Mittlere nFK und Differenz aller Zeitreihen pro DAS plotten (sinnvoll??)
+```{r, warning=FALSE}
+# df_diff_mean <- map_df(df_all_results, ~.$df_diffs_ANNI3$df_result_diffs, .id="id") %>%
+#     group_by(modelX, tage_seit_aussaat, depth) %>%
+#     summarise(across(c(nfk_diff, measured_nFK), ~mean(., na.rm = T)), .groups = "drop")
+# 
+# ggplot(df_diff_mean, aes(tage_seit_aussaat, y=nfk_diff, col = modelX)) + #y=c(measured_nFK, nfk_diff)
+#     geom_hline(yintercept = 0, col = "grey30") +
+#     geom_line() + 
+#     facet_grid(depth~.) + 
+#     theme_bw() + 
+#     theme(panel.grid = element_blank())
+```
+
+
+```{r}
+#library(viridis)
+# c("df_result2","df_result2_ANNI2", "df_result2_ANNI3")
+# 
+# map_df(df_all_results, ~.[["df_result2_ANNI2"]]$df_result_diffs %>%
+#            drop_na(), .id="id") %>%
+#     group_by(modelX, depth) %>%
+#     mutate(x = tage_seit_aussaat * as.numeric(id) ) %>% 
+#     mutate(x = 1:n()) %>% 
+#     
+#     ggplot(aes(x, modelX, fill= nfk_diff)) + 
+#     geom_tile() +
+#     facet_grid(depth~.) + 
+#     # theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+
+#     scale_fill_viridis(discrete=FALSE)
+```
+
+```{r}
+
+```
+
